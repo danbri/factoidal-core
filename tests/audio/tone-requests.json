@@ -1,0 +1,6 @@
+[
+ {"op":"scriptSession","action":"start","url":"file:///tone-page.html","resources":[],"engine":"bubblepop","instructionsPerMs":1000000000000},
+ {"op":"scriptSession","action":"advance","ms":0},
+ {"op":"scriptSession","action":"key","text":"a"},
+ {"op":"scriptSession","action":"advance","ms":25,"repeat":80,"everyMs":25}
+]

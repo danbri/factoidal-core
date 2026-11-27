@@ -34,6 +34,7 @@ import WebPaint
 import L4Factoidal.Rendering.FontFaceRule
 import L4Factoidal.Rendering.ImportTree
 import L4Factoidal.HTML.AccessibleTree
+import L4Factoidal.WebAudio.Realtime
 
 /-! Browser document transaction. Lean discovers resources, applies DOM commands,
 orders supplied CSS, collects font requests and renders the resulting arena.
@@ -3921,6 +3922,9 @@ structure Engine where
   holds : Holds := {}
   /-- Page scripts: the guest module and the session (`WebScripts`). -/
   scripts : WebScripts.Held := {}
+  /-- The rendering tasks of the real-time `AudioContext`s of this engine's page sessions, by
+  (session, context) (`WebAudio.Realtime`; plan 13.3, issue 1169). -/
+  audioTasks : L4Factoidal.WebAudio.Realtime.Tasks := {}
   /-- The layouts of the last keys (`lookupLayout`). -/
   layouts : Lru LayoutKey Laid := []
   /-- Frames with a pointer state painted on a kept layout (`paintedSlots`). -/
@@ -4668,12 +4672,81 @@ def packAnswer (head : String) (sections : Array ByteArray) : ByteArray := Id.ru
 and tile words as raw sections (`packAnswer`). The head is the `compile` answer with
 `"dataSection":k` in place of `"dataBase64"` and `"tilesSection":k+1` in place of
 `"tiles"`; other answers have no section. -/
+/-! ### Web Audio: the engine's IO layer (plan 13.2 and 13.3, issue 1169) -/
+
+/-- The page hosts of the held sessions on both engines, changed by `f` (a session with no real-time
+context is not touched: `f` answers `none`). -/
+def audioHosts (held : WebScripts.Held) (f : Nat → Page.Host → BaseIO (Option Page.Host)) :
+    BaseIO WebScripts.Held := do
+  let mut held := held
+  if let some (id, s, m) := held.leanSession then
+    if let some h ← f id s.host then held := { held with leanSession := some (id, s.setHost h, m) }
+  if let some (id, s, m) := held.session then
+    if let some h ← f id s.host then held := { held with session := some (id, { s with host := h }, m) }
+  return held
+
+/-- Before an action of session `sid`: its tasks' reports are merged into the page's audio state,
+and the callbacks of the contexts that have events are queued as tasks (`Api.takeWakeups`). -/
+def audioBefore (tasks : L4Factoidal.WebAudio.Realtime.Tasks) (held : WebScripts.Held) :
+    BaseIO (L4Factoidal.WebAudio.Realtime.Tasks × WebScripts.Held) := do
+  if tasks.isEmpty then return (tasks, held)
+  let ref ← IO.mkRef tasks
+  let held ← audioHosts held fun sid h => do
+    let ts ← ref.modifyGet fun t => (t, t)
+    if !(ts.toList.any fun ((s, _), _) => s == sid) then return none
+    let (ts, audio) ← L4Factoidal.WebAudio.Realtime.before ts sid h.web.audio h.loop.clock
+    ref.modify fun _ => ts
+    let (audio, wakes) := L4Factoidal.WebAudio.Api.takeWakeups audio
+    let loop := wakes.foldl (fun l cb => l.queueTask .other cb) h.loop
+    return some { h with web := { h.web with audio }, loop }
+  return (← ref.modifyGet fun t => (t, t), held)
+
+/-- After an action: the outboxes go to the tasks (a new context gets one), and the tasks of a
+session that is no longer held are stopped (navigation, a closed tab). -/
+def audioAfter (tasks : L4Factoidal.WebAudio.Realtime.Tasks) (held : WebScripts.Held) :
+    BaseIO (L4Factoidal.WebAudio.Realtime.Tasks × WebScripts.Held) := do
+  let dev ← L4Factoidal.WebAudio.Realtime.device
+  let ref ← IO.mkRef tasks
+  let held ← audioHosts held fun sid h => do
+    let a := h.web.audio
+    if !(a.realtime.fold (fun b _ rt => b || !rt.outbox.isEmpty) false) then return none
+    let some (spec, _, _) := dev | return none
+    let ts ← ref.modifyGet fun t => (t, t)
+    let (ts, audio) ← L4Factoidal.WebAudio.Realtime.after ts sid spec a
+    ref.modify fun _ => ts
+    return some { h with web := { h.web with audio } }
+  let live := (held.leanSession.map (·.1)).toList ++ (held.session.map (·.1)).toList
+  let ts ← ref.modifyGet fun t => (t, t)
+  let ts ← if ts.isEmpty then pure ts else L4Factoidal.WebAudio.Realtime.stopGone ts live
+  return (ts, held)
+
+/-- The start request with the audio output's rate and channels (`WebScripts.audioStart`), when the
+engine has one. -/
+def withAudioDevice (j : JSON.Json) : BaseIO JSON.Json := do
+  if str j "action" != "start" then return j
+  match ← L4Factoidal.WebAudio.Realtime.device, j with
+  | some (_, rate, ch), .object fs =>
+    return .object (fs ++ [("audioDeviceRate", .number (toString rate.toUInt64.toNat)),
+                           ("audioDeviceChannels", .number (toString ch))])
+  | _, _ => return j
+
+/-- A `scriptSession` call with Web Audio around it (plan 13.2): reports in before, outboxes out
+after. Other calls are `k` itself. -/
+def audioAround {α : Type} (e : Engine) (j : JSON.Json) (k : Engine → JSON.Json → BaseIO (Engine × α)) :
+    BaseIO (Engine × α) := do
+  if str j "op" != "scriptSession" then return ← k e j
+  let j ← withAudioDevice j
+  let (tasks, scripts) ← audioBefore e.audioTasks e.scripts
+  let (e, r) ← k { e with audioTasks := tasks, scripts } j
+  let (tasks, scripts) ← audioAfter e.audioTasks e.scripts
+  return ({ e with audioTasks := tasks, scripts }, r)
+
 @[export web_document_compile_bin]
 def compileBin (e : Engine) (html request : String) (width height : UInt32) : BaseIO (Engine × ByteArray) := do
   match parseRequest request with
   | .error message => return (e,packAnswer (WebRender.errorJSON message) #[])
   | .ok j =>
-    let (e,r) ← answerIn e true html j width.toNat height.toNat
+    let (e,r) ← audioAround e j fun e j => answerIn e true html j width.toNat height.toNat
     return (e,match r with
       | .ok (head,sections) => packAnswer head sections
       | .error message => packAnswer (WebRender.errorJSON message) #[])
@@ -4683,7 +4756,7 @@ def compile (e : Engine) (html request : String) (width height : UInt32) : BaseI
   match parseRequest request with
   | .error message => return (e,WebRender.errorJSON message)
   | .ok j =>
-    let (e,r) ← answerIn e false html j width.toNat height.toNat
+    let (e,r) ← audioAround e j fun e j => answerIn e false html j width.toNat height.toNat
     return (e,match r with
       | .ok (value,_) => value
       | .error message => WebRender.errorJSON message)

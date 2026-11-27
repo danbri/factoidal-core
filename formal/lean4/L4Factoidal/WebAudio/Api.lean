@@ -139,13 +139,16 @@ merges the reports (`applyReport`), takes decode jobs and wakeups; this file has
     binary32 channel by channel; or the error the decoder gave (-30, -23). The job is removed
     when the result is given, and also when it is an error (so 195 is the one op that changes the
     state while it answers an error). -29 while the job is pending; -20 for no such job.
-  * 196 `activate()`: the page's sticky activation; releases the pending `resume` calls.
+  * 196 answers -2 (it was `activate()` in D2). Sticky activation is the engine's: its trusted input
+    step calls `activate` when `WebDriver.Input.activates` holds, and no page op changes
+    `activated` (`op_activated`; plan 13.7).
 
 No op changes a context other than the one it names (`withCtx_other`), and an op that fails
 changes nothing (`op_error_state`; op 195 with a stored error result excepted).
 -/
 import L4Factoidal.WebAudio.Context
 import L4Factoidal.WebAudio.Idl
+import L4Factoidal.Risk
 import Std.Data.HashMap
 
 namespace L4Factoidal.WebAudio.Api
@@ -237,9 +240,12 @@ structure State where
   /-- The output's preferred sample rate and channel count, set by the engine; `none`: no audio
   output (op 190 answers -23). -/
   device : Option (Float × Nat) := none
-  /-- True: no activation is needed (the WPT runner and tests). -/
-  autoplay : Bool := false
-  /-- The page's sticky activation (op 196). -/
+  /-- `some`: no activation is needed (the option `--dangerously-permit-audio`, the WPT runner and
+  tests). The token is made only by `Risk.dangerouslyAccept`, at the engine's start request with
+  `dangerouslyPermitAudio: true` (plan 13.7). -/
+  autoplay : Option (Risk.Accepted .audioWithoutActivation) := none
+  /-- The page's sticky activation. Set only by `activate`, which the engine calls from its trusted
+  input step (`WebScripts.performInput`); no page op changes it (`op_activated`). -/
   activated : Bool := false
   nextCall : Nat := 1
   decodeJobs : Std.HashMap Nat DecodeJob := {}
@@ -735,6 +741,10 @@ def dec (k : Nat) : ByteArray := ofStr (toString k)
 def rateText (r : Float) : String :=
   if r == r.floor && r < 1e9 then toString r.toUInt64.toNat else toString r
 
+/-- Plan 13.7: a real-time context may start or resume. The one place this is decided, so a later
+permission for each site changes this function only. -/
+def allowedToStart (s : State) : Bool := s.autoplay.isSome || s.activated
+
 /-- Real-time contexts that are not closed. -/
 def liveRealtime (s : State) : Nat :=
   s.realtime.fold (fun n _ rt => if rt.state == .closed then n else n + 1) 0
@@ -775,9 +785,10 @@ def newAudioContextOp (s : State) (fs : Array ByteArray) : Except Int (State × 
   let id := s.next
   let target := targetFrames hint rate
   let rt : Realtime :=
-    { state := if s.autoplay || s.activated then .running else .suspended
+    { state := if allowedToStart s then .running else .suspended
       maxChannels := devCh, target, callback := cb
-      outbox := #[(190, #[dec id, f64le rate, dec devCh, dec target])] }
+      outbox := #[(190, #[dec id, f64le rate, dec devCh, dec target,
+                          dec (if allowedToStart s then 1 else 0)])] }
   pure ({ s with contexts := s.contexts.insert id c, realtime := s.realtime.insert id rt,
                  next := id + 1 },
         ofStr s!"{id} {rateText rate} {devCh} {rt.state.text}")
@@ -789,7 +800,7 @@ def controlOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArra
   if !(verb == "resume" || verb == "suspend" || verb == "close") then throw errType
   if rt.state == .closed then throw errInvalidState
   let call := s.nextCall
-  let wait := verb == "resume" && !(s.autoplay || s.activated)
+  let wait := verb == "resume" && !allowedToStart s
   let rt' : Realtime :=
     { rt with calls := rt.calls.push (call, verb)
               pendingResume := if wait then rt.pendingResume.push call else rt.pendingResume
@@ -837,7 +848,9 @@ def decodeResultOp (s : State) (fs : Array ByteArray) : State × Except Int Byte
       | none => (s, .error errInvalidState)
       | some r => ({ s with decodeJobs := s.decodeJobs.erase job }, r.map decodeAnswer)
 
-/-- Op 196: sticky activation. Each pending `resume` call goes to its context's outbox. -/
+/-- Sticky activation (HTML "has been activated"): each pending `resume` call goes to its
+context's outbox. Not a page op: the engine calls it from its trusted input step when
+`WebDriver.Input.activates` holds (plan 13.7). -/
 def activate (s : State) : State :=
   { s with activated := true
            realtime := s.realtime.map fun id rt =>
@@ -939,7 +952,6 @@ def run (s : State) (code : Nat) (fs : Array ByteArray) : Except Int (State × B
   | 192 => timeOp s fs
   | 193 => eventsOp s fs
   | 194 => decodeAudioDataOp s fs
-  | 196 => pure (activate s, ByteArray.empty)
   | _ => .error (-2)
 
 /-- The ops whose success is also sent to the rendering side of a real-time context. -/
@@ -958,23 +970,36 @@ def pushOutbox (s : State) (code : Nat) (fs : Array ByteArray) : State :=
     | none => s
   | .error _ => s
 
-/-- The operations 173 to 196. A failed op leaves the state as it was (except 195 with a stored
-error result); the answer is the error code (negative) or the bytes. -/
-def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int ByteArray :=
+/-- The page operations 173 to 195, before `op` keeps `activated`. -/
+def op0 (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int ByteArray :=
   if code = 195 then decodeResultOp s fs
   else
     match run s code fs with
     | .ok (s', out) => ((if outboxCode code then pushOutbox s' code fs else s'), .ok out)
     | .error e => (s, .error e)
 
+/-- The page operations 173 to 195. A failed op leaves the state as it was (except 195 with a
+stored error result); the answer is the error code (negative) or the bytes. The page's
+activation is the engine's (`activate`): `op` gives back the `activated` it was given. -/
+def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int ByteArray :=
+  let r := op0 s code fs
+  ({ r.1 with activated := s.activated }, r.2)
+
+/-- Says: no page op changes the page's activation. Does not say: anything about `activate`, which
+the engine's input step calls. -/
+theorem op_activated (s : State) (code : Nat) (fs : Array ByteArray) :
+    (op s code fs).1.activated = s.activated := rfl
+
 /-- Says: an op other than 195 that answers an error returns the state it was given. Does not
 say: that an op that succeeds changes the state (a query does not); nor anything about 195, which
 removes a job whose stored result is an error. -/
 theorem op_error_state (s : State) (code : Nat) (fs : Array ByteArray) (e : Int)
     (hc : code ≠ 195) (h : (op s code fs).2 = .error e) : (op s code fs).1 = s := by
-  unfold op at *
-  simp only [hc, if_false] at *
-  split at h <;> simp_all
+  have h0 : (op0 s code fs).1 = s := by
+    unfold op op0 at *
+    simp only [hc, if_false] at *
+    split at h <;> simp_all
+  simp only [op, h0]
 
 /-- Says: a code outside 173 to 196 answers -2 and leaves the state alone. Does not say: anything
 about the codes inside the range. -/
@@ -984,7 +1009,7 @@ theorem op_unknown (s : State) (code : Nat) (fs : Array ByteArray) (h : code < 1
     unfold run
     split <;> first | omega | rfl
   have hc : code ≠ 195 := by omega
-  unfold op
+  unfold op op0
   rw [if_neg hc, hr]
 
 /-- Says: `withCtx` changes only `contexts`. Does not say: which context. -/
@@ -1031,7 +1056,7 @@ theorem op_outbox (s s' : State) (code : Nat) (fs : Array ByteArray) (out : Byte
     s'.realtime[id]? = some { rt with outbox := rt.outbox.push (code, fs) } ∧
     ∀ id', id' ≠ id → s'.realtime[id']? = s.realtime[id']? := by
   have hn : code ≠ 195 := by unfold outboxCode at hc; simp at hc; omega
-  unfold op at h
+  unfold op op0 at h
   rw [if_neg hn] at h
   split at h
   · rename_i s1 o1 hr
@@ -1438,7 +1463,10 @@ private def sn : ByteArray := f32le 0.0 ++ f32le 1.0
 #guard codeOf (.invalidState "") == -29 && codeOf (.range "") == -21 && codeOf (.type "") == -20
 #guard errEncoding == -30
 
-/-! ### Real-time contexts (ops 190 to 196) -/
+/-! ### Real-time contexts (ops 190 to 195, and `activate`) -/
+
+-- Tests only: the token the engine makes for `dangerouslyPermitAudio: true`.
+private def permit : Risk.Accepted .audioWithoutActivation := Risk.dangerouslyAccept .audioWithoutActivation
 
 private def devS : State := { device := some (48000.0, 2) }
 private def rtOf (s : State) (id : Nat) : Realtime := (s.realtime[id]?).getD default
@@ -1447,7 +1475,7 @@ private def u8s (b : ByteArray) : List Nat := b.toList.map (·.toNat)
 
 -- Making a context: the answer, with and without activation.
 #guard txt (ans devS 190 [t "interactive", ByteArray.empty, n 7]) == "1 48000 2 suspended"
-#guard txt (ans { devS with autoplay := true } 190 [t "interactive", ByteArray.empty, n 7]) ==
+#guard txt (ans { devS with autoplay := some permit } 190 [t "interactive", ByteArray.empty, n 7]) ==
   "1 48000 2 running"
 #guard txt (ans { devS with activated := true } 190 [t "balanced", d 44100.0, n 7]) ==
   "1 44100 2 running"
@@ -1483,11 +1511,11 @@ private def full : State :=
   let s ← chain devS [(190, [t "playback", ByteArray.empty, n 7])]
   let m := (rtOf s 1).outbox
   pure (m.size, m[0]!.1, m[0]!.2.size, strArg m[0]!.2 0, Float.ofBits (u64At m[0]!.2[1]! 0),
-        strArg m[0]!.2 2, strArg m[0]!.2 3)) == some (1, 190, 4, "1", 48000.0, "2", "4096")
+        strArg m[0]!.2 2, strArg m[0]!.2 3, strArg m[0]!.2 4)) == some (1, 190, 5, "1", 48000.0, "2", "4096", "0")
 
 -- The outbox after a few ops; an offline context beside it is not touched.
 private def rtGraph : Option State :=
-  chain { devS with autoplay := true } [
+  chain { devS with autoplay := some permit } [
     (175, [n 1, n 100, d 44100.0]),                                  -- ctx 1, offline
     (190, [t "interactive", ByteArray.empty, n 7]),                  -- ctx 2, real-time
     (176, [n 2, t "oscillator"]), (176, [n 1, t "gain"]),
@@ -1546,7 +1574,7 @@ private def curve (vs : List Float) : ByteArray := vs.foldl (fun a v => a ++ f32
     nd.params[0]?.map fun p => p.timeline.events.length)) ==
   some (some 2)
 -- Both are sent to the rendering side of a real-time context.
-#guard (chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7]),
+#guard (chain { devS with autoplay := some permit } [(190, [t "interactive", ByteArray.empty, n 7]),
           (176, [n 1, t "gain"]),
           (179, [n 1, n 1, n 0, t "setValueCurveAtTime", curve [0.0, 1.0], d 0.0, d 1.0]),
           (179, [n 1, n 1, n 0, t "cancelAndHoldAtTime", d 0.5])]).map
@@ -1558,7 +1586,7 @@ private def curve (vs : List Float) : ByteArray := vs.foldl (fun a v => a ++ f32
 #guard err (chain devS [(190, [t "interactive", ByteArray.empty, n 7])]).get! 191 [n 1, t "play"] == errType
 -- With autoplay a resume goes to the outbox at once; the call id is answered.
 #guard (do
-  let s ← chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7])]
+  let s ← chain { devS with autoplay := some permit } [(190, [t "interactive", ByteArray.empty, n 7])]
   let (s, r) ← (step s 191 #[n 1, t "resume"]).toOption
   let (s, r2) ← (step s 191 #[n 1, t "suspend"]).toOption
   let rt := rtOf s 1
@@ -1566,7 +1594,10 @@ private def curve (vs : List Float) : ByteArray := vs.foldl (fun a v => a ++ f32
         rt.outbox[1]!.2.toList.map (String.fromUTF8! ·), rt.calls.toList.map (·.2),
         rt.pendingResume.size)) ==
   some ("1", "2", [190, 191, 191], ["1", "resume", "1"], ["resume", "suspend"], 0)
--- Without activation a resume waits; 196 releases it into the outbox, once.
+-- Without activation a resume waits; `activate` releases it into the outbox, once.
+-- 196 is not a page op, and no page op changes `activated`.
+#guard err devS 196 [] == -2
+#guard ((op devS 190 #[t "interactive", ByteArray.empty, n 7]).1.activated, (op { devS with activated := true } 196 #[]).1.activated) == (false, true)
 private def waiting : Option State :=
   chain devS [(190, [t "interactive", ByteArray.empty, n 7]), (191, [n 1, t "resume"]),
               (191, [n 1, t "suspend"])]
@@ -1574,7 +1605,7 @@ private def waiting : Option State :=
   some ([190, 191], [1])
 #guard (do
   let s ← waiting
-  let (s, r) ← (step s 196 #[]).toOption
+  let (s, r) := (activate s, ByteArray.empty)
   let rt := rtOf s 1
   pure (r.size, s.activated, rt.outbox.toList.map (·.1), rt.outbox[2]!.2.toList.map (String.fromUTF8! ·),
         rt.pendingResume.size, (activate s).realtime[1]?.map (·.outbox.size))) ==
@@ -1582,14 +1613,14 @@ private def waiting : Option State :=
 -- After activation a new context starts running and a resume is not held.
 #guard (do
   let s ← waiting
-  let (s, _) ← (step s 196 #[]).toOption
+  let s := activate s
   let (s, r) ← (step s 190 #[t "interactive", ByteArray.empty, n 7]).toOption
   let (s, _) ← (step s 191 #[n 2, t "resume"]).toOption
   pure (String.fromUTF8! r, (rtOf s 2).outbox.toList.map (·.1))) == some ("2 48000 2 running", [190, 191])
 
 -- 192, 193: a report that ends a source and resolves a call; currentTime is monotone.
 private def reported : Option State := do
-  let s ← chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7]),
+  let s ← chain { devS with autoplay := some permit } [(190, [t "interactive", ByteArray.empty, n 7]),
             (176, [n 1, t "constantSource"]), (191, [n 1, t "resume"])]
   pure (applyReport s 1 { framesRendered := 24000, framesPlayed := 20000, underruns := 1,
                           latencyFrames := 480, timeMs := 1234.5, ended := #[1],
@@ -1625,7 +1656,7 @@ private def reported : Option State := do
 -- A report with no events queues no wakeup; a rejected call is an event of kind 4 and a state
 -- change sets the state; a context that is not real-time is not changed.
 #guard (do
-  let s ← chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7]),
+  let s ← chain { devS with autoplay := some permit } [(190, [t "interactive", ByteArray.empty, n 7]),
                                                 (191, [n 1, t "close"])]
   let s1 := applyReport s 1 { framesRendered := 5 }
   let s2 := applyReport s 1 { rejected := #[1], stateChanges := #[.suspended, .closed] }
@@ -1634,7 +1665,7 @@ private def reported : Option State := do
         s3.wakeups.size)) == some (0, [(2, 0), (2, 2), (4, 1)], true, [7], 0)
 -- A closed context refuses control calls.
 #guard (do
-  let s ← chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7])]
+  let s ← chain { devS with autoplay := some permit } [(190, [t "interactive", ByteArray.empty, n 7])]
   let s := applyReport s 1 { stateChanges := #[.closed] }
   pure (err s 191 [n 1, t "resume"], err s 191 [n 1, t "suspend"], err s 191 [n 1, t "close"],
         (op s 176 #[n 1, t "gain"]).1.realtime[1]?.map (·.outbox.size),
@@ -1643,7 +1674,7 @@ private def reported : Option State := do
 private def fullClosed : State :=
   (List.range 16).foldl (fun s i =>
     applyReport (op s 190 #[t "interactive", ByteArray.empty, n 1]).1 (i + 1)
-      { stateChanges := #[.closed] }) { devS with autoplay := true }
+      { stateChanges := #[.closed] }) { devS with autoplay := some permit }
 #guard err fullClosed 190 [t "interactive", ByteArray.empty, n 1] == 0
 
 -- takeOutbox: the messages, once, in order; then nothing.

@@ -8,6 +8,7 @@ import L4Factoidal.HTML.CspSource
 import WebRenderScript
 import WebWasm
 import WebShell
+import L4Factoidal.WebAudio.Api
 
 /-!
 # WebScripts: page scripts run by Lean in the Foafnaut engine
@@ -469,6 +470,11 @@ theorem animatedOf_earlier (reads : Page.Reads) (now : Int) (hn : reads.keptNow 
     animatedOf reads now = none := by
   simp [animatedOf, hn]
 
+/-- A real-time `AudioContext` that runs, or waits for a control call: the turn's `nextWake` is at
+most 25 ms ahead, so that the host gives the turns that deliver its events (plan 13.3). -/
+def audioWakes (a : L4Factoidal.WebAudio.Api.State) : Bool :=
+  a.realtime.fold (fun b _ rt => b || rt.state == .running || !rt.calls.isEmpty || !rt.outbox.isEmpty) false
+
 /-- The answer of a turn. -/
 def turnAnswerOf (id : Nat) (before : Before) (s : View) (marks : Marks) (full : Bool) (ns : Nat)
     (extra : List (String × JSON.Json) := []) : String × Marks :=
@@ -486,7 +492,8 @@ def turnAnswerOf (id : Nat) (before : Before) (s : View) (marks : Marks) (full :
     ("nextTimer",match loop.timers with | t :: _ => num t.due | [] => .null),
     ("frames",num loop.frames.length),
     -- a task still queued (an advance that stopped between tasks, `sliceSteps`) is due now
-    ("nextWake",match [if loop.idle then none else some loop.clock, loop.timers.head?.map (·.due), s.nextFrame, s.moveWake].filterMap (fun x => x) with
+    ("nextWake",match [if loop.idle then none else some loop.clock, loop.timers.head?.map (·.due), s.nextFrame, s.moveWake,
+        if audioWakes s.host.web.audio then some (loop.clock + 25) else none].filterMap (fun x => x) with
       | [] => .null
       | t :: ts => num (ts.foldl min t)),
     ("quiet",.bool s.quiet),
@@ -1239,6 +1246,27 @@ def hostKeyOf (request : JSON.Json) : Option WebDriver.HostKeys.HostKey :=
   | _, _, some (.string k) => some (.dom k bits)
   | _, _, _ => none
 
+/-- Web Audio at a session's start (plan 13.1 and 13.7): `audioDeviceRate` and
+`audioDeviceChannels`, which the engine's IO layer adds to the start request when it has an audio
+output (`WebDocument.audioAround`), and `dangerouslyPermitAudio: true`, which a host sends only for
+its option `--dangerously-permit-audio` or the Settings switch: the one place the risk
+`audioWithoutActivation` is accepted. Page content never reaches these members. -/
+def audioStart (request : JSON.Json) (h : Page.Host) : Page.Host :=
+  let device := match natField request "audioDeviceRate", natField request "audioDeviceChannels" with
+    | some r, some c => if 0 < c then some (r.toFloat, c) else none
+    | _, _ => none
+  let autoplay := if boolField request "dangerouslyPermitAudio" then
+      some (L4Factoidal.Risk.dangerouslyAccept .audioWithoutActivation) else none
+  if device.isNone && autoplay.isNone then h
+  else { h with web := { h.web with audio := { h.web.audio with device, autoplay } } }
+
+/-- Kind: property. Says: a start request with none of the audio members leaves the host as it
+is. -/
+theorem audioStart_none (request : JSON.Json) (h : Page.Host)
+    (h1 : natField request "audioDeviceRate" = none) (h2 : boolField request "dangerouslyPermitAudio" = false) :
+    audioStart request h = h := by
+  simp [audioStart, h1, h2]
+
 /-- Input of the user as WebDriver's Perform Actions (`Actions.perform`, then Release
 Actions with `release`) over the engine (`PageEvents.inputDriver`): the one place the
 trusted input state changes. An event that gives user activation records its time. -/
@@ -1247,8 +1275,16 @@ def performInput (sources : List WebDriver.Actions.Source) (release : Bool) (a :
   let e := LeanJSWorkers.engine
   let base := e.inputDriver refNode
   let dispatch := fun (a : LeanJSWorkers.Agents) (low : WebDriver.Actions.Low) =>
-    let a := base.dispatch a low
-    if WebDriver.Input.activates low then { a with page := a.page.setTrusted { a.page.trusted with activated := some (e.loop a).clock } } else a
+    -- HTML "activation notification": before the event is dispatched, so its listeners see the
+    -- activation (a click's listener may start an AudioContext). The same step releases the Web
+    -- Audio autoplay rule (plan 13.7).
+    let a := if WebDriver.Input.activates low then
+        let a := { a with page := a.page.setTrusted { a.page.trusted with activated := some (e.loop a).clock } }
+        let h := a.page.host
+        if h.web.audio.activated then a
+        else { a with page := a.page.setHost { h with web := { h.web with audio := L4Factoidal.WebAudio.Api.activate h.web.audio } } }
+      else a
+    base.dispatch a low
   let d : WebDriver.Actions.Driver LeanJSWorkers.Agents := { env := base.env, dispatch := dispatch, wait := base.wait }
   let start : WebDriver.Actions.Run LeanJSWorkers.Agents := { engine := a, input := a.page.trusted.actions }
   let r := WebDriver.Actions.perform d start sources
@@ -1419,6 +1455,7 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
       let wEnt := workerEntropyOf id b
       let lim := { lim with mayBlock := network && mentionsXhr scripts }
       let begin := LeanJS.startBegin base dom url lim reads { instructionsPerMs := rate }
+      let begin := begin.setHost (audioStart request begin.host)
       -- a page that may make sync requests stops at the first classic script that waits for an
       -- answer and keeps the point (`LeanJS.startUntil`); any other page runs them all (`LeanJS.start`)
       -- a host that gave a step budget (`sliceSteps`) gets the start in slices (`startRestSliced`)

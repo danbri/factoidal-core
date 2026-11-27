@@ -484,6 +484,10 @@ lean_exe «media-bench» where root := `L4Factoidal.Media.Bench
 -- The audio sink and its ring against a WAV file (tests/audio/run.sh).
 lean_exe «audio-sink-test» where root := `Harness.AudioSinkTest
 
+-- A real-time AudioContext through its rendering task to a WAV file, against an offline render
+-- (issue 1169, step D3; tests/audio/run.sh).
+lean_exe «audio-realtime-test» where root := `Harness.AudioRealtimeTest
+
 -- Time of one Web Audio render quantum (issue 1169).
 lean_exe «webaudio-bench» where root := `Harness.WebAudioBench
 

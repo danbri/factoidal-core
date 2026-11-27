@@ -13,6 +13,12 @@
 #
 #   4. automation-fill-diff  `lake exe automation-fill-diff`: 20,000 random AudioParam event lists, `Automation.fill`
 #                    (binary64) against `Automation.fillSpec` (exact rationals), bit for bit.
+#   5. audio-realtime-test  `lake exe audio-realtime-test`: a real-time AudioContext's ops through the engine's IO
+#                    functions and its rendering task to `wav:PATH`, bit for bit against an OfflineAudioContext
+#                    render of the same ops; no under-run; the autoplay rule (plan 13.7) through `null`.
+#   6. page_tone.sh  a page's AudioContext on BubblePopJS in the native engine to a WAV file, against the
+#                    page's own OfflineAudioContext render. Skipped (not failed) when web-render-native is
+#                    not built; it needs labs/demos/foafnaut/build-web-render.sh --native.
 #
 # Needs gcc (with libtsan), the Lean toolchain (elan). Exit 0 only when every part passes.
 set -uo pipefail
@@ -59,6 +65,16 @@ part "audio-sink-test" $rc
 rc=0
 (cd "$LEAN4" && lake build automation-fill-diff >/dev/null && .lake/build/bin/automation-fill-diff) || rc=$?
 part "automation-fill-diff" $rc
+
+# 5. A real-time context through its rendering task
+rc=0
+(cd "$LEAN4" && lake build audio-realtime-test >/dev/null && AUDIO_TEST_DIR="$TMP" .lake/build/bin/audio-realtime-test) || rc=$?
+part "audio-realtime-test" $rc
+
+# 6. A page through the native engine
+rc=0
+"$HERE/page_tone.sh" || rc=$?
+if [ $rc -eq 2 ]; then echo "audio page_tone: skipped (no web-render-native)"; else part "page_tone" $rc; fi
 
 if [ $fails -eq 0 ]; then echo "audio: all pass"; exit 0; fi
 echo "audio: $fails part(s) failed"
