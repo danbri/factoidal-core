@@ -17,3 +17,10 @@ moreLeancArgs = ["-O3"]
 name = "evm-precompile"
 root = "EVMCleanroom.PrecompileCLI"
 moreLeancArgs = ["-O3"]
+
+# Differential check and timing of the pairing checks on the limb tower, and
+# the old path in the format of `evm-precompile --bench`.
+[[lean_exe]]
+name = "evm-pairingperf"
+root = "EVMCleanroom.PairingPerf.Main"
+moreLeancArgs = ["-O3"]
