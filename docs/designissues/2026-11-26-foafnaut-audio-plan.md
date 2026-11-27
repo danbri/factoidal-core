@@ -654,7 +654,9 @@ latency. `--perf-summary` gets a block `audio`.
     about 0.7 microseconds a value (2^22: 2.5 s); the `apiCall` block is limited to 64 MiB
     (`LeanJS.outCap`) in both directions, so a buffer or a decode answer above 16.7 million
     samples (a 3-minute stereo song at 48 kHz is 17.3 million) is refused with -5. Chunked transfer
-    would need ops of its own and a contiguous `Float32Array` made without `set`.
+    would need ops of its own and a contiguous `Float32Array` made without `set`. Tracking, with an
+    expected-failure case in `webaudio_decode_test.ts`:
+    https://github.com/danbri/factoidal-core/issues/1177 (one page call carries at most 64 MiB).
   - Tests: `webaudio_decode_test.ts` (the five clips equal `lake exe media-bench decode` bit for bit at
     44.1 kHz; detach, order of callbacks, `EncodingError`, `DataCloneError`, `TypeError`, no modules
     gives `NotSupportedError`), `webaudio_jukebox_test.ts` (Decode all gives "Decoded 6 of 6 tracks.",
