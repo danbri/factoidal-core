@@ -1,0 +1,11 @@
+name = "evm_cleanroom"
+version = "0.1.0"
+defaultTargets = ["evm-sparse-probe"]
+moreLeanArgs = ["-j1", "-M2048", "-s32768"]
+
+[[lean_lib]]
+name = "EVMCleanroom"
+
+[[lean_exe]]
+name = "evm-sparse-probe"
+root = "EVMCleanroom.SparseReplaceProbe"
