@@ -505,10 +505,149 @@ def vectorPictureOf (edit : XML.NamespaceNode → XML.NamespaceNode) : NativeIma
 /-- An SVG document as a picture: `vectorPictureOf` with the document as it is. -/
 def vectorPicture : NativeImage.VectorReader := vectorPictureOf id
 
-/-- The decoder of an image key whose fragment names an SVG view (`svgViewOf`): the file
-drawn with that view. None for a key with no such view, which the plain decoder reads. -/
+/-- A number of a spatial fragment (Media Fragments URI 1.0 §4.2.2): digits for pixels,
+digits with an optional `.` and digits for percentages. No sign. -/
+private def fragmentNumber (decimals : Bool) (s : String) : Option Float :=
+  let digits := fun (t : String) => !t.isEmpty && t.all Char.isDigit
+  match s.splitOn "." with
+  | [a] => if digits a then some (Float.ofNat a.toNat!) else none
+  | [a,b] => if decimals && digits a && digits b then (NativeSVG.numberReference s).toOption else none
+  | _ => none
+
+/-- The value of `xywh`: four numbers with an optional `pixel:` or `percent:`; the width and
+the height must be more than zero. -/
+def parseXywh (value : String) : Option (Float × Float × Float × Float × Bool) := do
+  let (percent, rest) :=
+    if value.startsWith "percent:" then (true, (value.drop 8).toString)
+    else if value.startsWith "pixel:" then (false, (value.drop 6).toString) else (false, value)
+  let [x,y,w,h] ← (rest.splitOn ",").mapM (fragmentNumber percent) | none
+  if w ≤ 0 || h ≤ 0 then none else some (x,y,w,h,percent)
+
+/-- A spatial media fragment of an image key (Media Fragments URI 1.0 §4.2.2,
+`#xywh=[pixel:|percent:]x,y,w,h`): x, y, width, height and whether they are percentages.
+The fragment is percent-decoded and split at `&`; with several `xywh`, the last one counts
+(§5.1.4). None for a key with no `xywh`, or whose last `xywh` does not parse (the image is
+then drawn whole, §7.1). A fragment that names an SVG view is read by `svgViewOf`. -/
+def xywhOf (key : String) : Option (Float × Float × Float × Float × Bool) := do
+  let fragment := (key.splitOn "#").drop 1 |> String.intercalate "#"
+  if fragment.isEmpty then none
+  let fragment ← String.fromUTF8? (WHATWG.URL.percentDecode fragment.toUTF8)
+  if fragment.trimAscii.toString.startsWith "svgView(" then none
+  let values := (fragment.splitOn "&").filterMap fun part => match part.splitOn "=" with
+    | [n, v] => if n == "xywh" then some v else none
+    | _ => none
+  parseXywh (← values.getLast?)
+
+#guard xywhOf "s.svg#xywh=100,100,100,100" == some (100,100,100,100,false)
+#guard xywhOf "s.svg#xywh=pixel:1,2,3,4" == some (1,2,3,4,false)
+#guard xywhOf "s.svg#xywh=percent:50,0,50.5,100" == some (50,0,50.5,100,true)
+#guard xywhOf "s.svg#xywh=0,0,100,100&xywh=100,100,100,100" == some (100,100,100,100,false)
+#guard xywhOf "s.svg#xywh=100.0,100.0,100.0,100.0" == none
+#guard xywhOf "s.svg#xywh=100,100,-100,100" == none
+#guard xywhOf "s.svg#xywh=100,100,0,100" == none
+#guard xywhOf "s.svg#svgView(viewBox(0,0,1,1))" == none
+#guard xywhOf "s.svg" == none
+
+/-- The root attributes with a spatial clip: the region of the image, in CSS pixels of its size
+(`imageSize` before rounding; percentages of that size), clipped to the image (Media
+Fragments URI 1.0 §5.1.3), becomes the whole image: its `width` and `height` are the
+region's, and its `viewBox` is the region mapped into user space by the root's own
+`viewBox` and `preserveAspectRatio` (SVG 2 §8.2). An empty region, a root of zero size or
+a `preserveAspectRatio` that does not read leaves the attributes as they are. -/
+def clipAttributes (attrs : List XML.NamespaceAttribute) (clip : Float × Float × Float × Float × Bool) :
+    List XML.NamespaceAttribute := Id.run do
+  let (x,y,w,h,percent) := clip
+  let plain := fun (key : String) => NativeSVGText.plainAttr attrs key
+  let box := NativeSVGForgiving.rootViewBox (plain "viewBox")
+  let fields := ((plain "viewBox").getD "").replace "," " " |>.splitOn " " |>.filter (· != "")
+  let origin : Float × Float := match fields.mapM (fun f => (NativeSVG.numberReference f).toOption) with
+    | some [vx,vy,_,_] => (vx,vy)
+    | _ => (0,0)
+  let pw := NativeSVGForgiving.rootPixels (plain "width") true
+  let ph := NativeSVGForgiving.rootPixels (plain "height") true
+  let (iw,ih) : Float × Float := match pw,ph,box with
+    | some w,some h,_ => (w,h)
+    | some w,none,some (bw,bh) => (w,w*bh/bw)
+    | none,some h,some (bw,bh) => (h*bw/bh,h)
+    | none,none,some (bw,bh) => (bw,bh)
+    | some w,none,none => (w,150)
+    | none,some h,none => (300,h)
+    | none,none,none => (300,150)
+  if iw ≤ 0 || ih ≤ 0 then return attrs
+  let (x,y,w,h) := if percent then (x*iw/100,y*ih/100,w*iw/100,h*ih/100) else (x,y,w,h)
+  let (x0,y0,x1,y1) := (min x iw, min y ih, min (x+w) iw, min (y+h) ih)
+  if x1-x0 ≤ 0 || y1-y0 ≤ 0 then return attrs
+  let (vw,vh) := box.getD (iw,ih)
+  let words := ((plain "preserveAspectRatio").getD "xMidYMid meet").splitOn " " |>.filter (· != "")
+  let (align,mode) := match words with
+    | [a] => (a,"meet") | [a,m] => (a,m) | _ => ("","")
+  let alignments : List (String × Nat × Nat) := [("xMinYMin",(0,0)),("xMidYMin",(1,0)),("xMaxYMin",(2,0)),
+    ("xMinYMid",(0,1)),("xMidYMid",(1,1)),("xMaxYMid",(2,1)),("xMinYMax",(0,2)),("xMidYMax",(1,2)),("xMaxYMax",(2,2))]
+  let found : Option (Nat × Nat) := if align == "none" then some (0,0) else alignments.lookup align
+  let some (ax,ay) := found | return attrs
+  if !["meet","slice"].contains mode then return attrs
+  let (sx,sy) := if align == "none" then (iw/vw,ih/vh)
+    else let s := if mode == "meet" then min (iw/vw) (ih/vh) else max (iw/vw) (ih/vh); (s,s)
+  let (tx,ty) := if align == "none" then (0,0)
+    else ((iw-vw*sx)*Float.ofNat ax/2,(ih-vh*sy)*Float.ofNat ay/2)
+  let kept := attrs.filter fun a =>
+    !(a.name.namespace_.isNone && ["width","height","viewBox","preserveAspectRatio"].contains a.name.localPart)
+  let ux := origin.1+(x0-tx)/sx
+  let uy := origin.2+(y0-ty)/sy
+  return kept ++ [NativeSVGText.mkAttr "width" (toString (x1-x0)), NativeSVGText.mkAttr "height" (toString (y1-y0)),
+    NativeSVGText.mkAttr "viewBox" s!"{ux} {uy} {(x1-x0)/sx} {(y1-y0)/sy}",
+    NativeSVGText.mkAttr "preserveAspectRatio" "none"]
+
+/-- The root element with a spatial clip (`clipAttributes`). -/
+def applyClip (clip : Float × Float × Float × Float × Bool) : XML.NamespaceNode → XML.NamespaceNode
+  | .element name attrs children => .element name (clipAttributes attrs clip) children
+  | node => node
+
+/-- The reader of an image key whose fragment names an SVG view (`svgViewOf`) or a spatial
+media fragment (`xywhOf`): the file drawn with that view, or the region drawn as the whole
+image. None for a key with neither, which the plain reader reads. -/
+def viewReader (key : String) : Option NativeImage.VectorReader :=
+  match svgViewOf key with
+  | some view => some (vectorPictureOf (applySvgView view))
+  | none => (xywhOf key).map fun clip => vectorPictureOf (applyClip clip)
+
+/-- The decoder of an image key with a view (`viewReader`); none for a key with none. -/
 def svgViewDecode (key : String) : Option (ByteArray → NativeImage.Decoded) :=
-  (svgViewOf key).map fun view => NativeImage.decodeWith (vectorPictureOf (applySvgView view))
+  (viewReader key).map NativeImage.decodeWith
+
+/-- The size and the colour at the centre of an SVG image read as the key says (tests). -/
+private def viewProbe (key svg : String) : Option (Nat × Nat × Nat × Nat × Nat) := do
+  let .ok (b,w,h,_) ← ((viewReader key).getD vectorPicture) svg.toUTF8 | none
+  let i := ((b.height/2)*b.width+b.width/2)*4
+  some (w,h,(b.rgba.get! i).toNat,(b.rgba.get! (i+1)).toNat,(b.rgba.get! (i+3)).toNat)
+
+private def redGreen200 : String :=
+  "<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><rect width='200' height='200' fill='red'/>" ++
+  "<rect x='100' y='100' width='100' height='100' fill='lime'/></svg>"
+private def redGreenViewBox : String :=
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><rect width='200' height='200' fill='red'/>" ++
+  "<rect x='100' y='100' width='100' height='100' fill='lime'/></svg>"
+private def redGreenNoSize : String :=
+  "<svg xmlns='http://www.w3.org/2000/svg'><rect width='300' height='150' fill='red'/>" ++
+  "<rect x='150' width='150' height='150' fill='lime'/></svg>"
+private def quadrants : String :=
+  "<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'>" ++
+  "<rect width='100' height='100' fill='red'/><rect x='100' width='100' height='100' fill='lime'/>" ++
+  "<rect y='100' width='100' height='100' fill='blue'/><rect x='100' y='100' width='100' height='100' fill='blue'/></svg>"
+
+-- the region becomes the image: its size and its pixels
+#guard viewProbe "s.svg#xywh=100,100,100,100" redGreen200 == some (100,100,0,255,255)
+#guard viewProbe "s.svg#xywh=percent:50,50,50,50" redGreen200 == some (100,100,0,255,255)
+#guard viewProbe "s.svg#xywh=100,100,200,200" redGreen200 == some (100,100,0,255,255)
+#guard viewProbe "s.svg#xywh=100,100,100,100" redGreenViewBox == some (100,100,0,255,255)
+#guard viewProbe "s.svg#xywh=percent:50,0,50,100" redGreenNoSize == some (150,150,0,255,255)
+-- an invalid fragment leaves the image as it is
+#guard viewProbe "s.svg#xywh=100.0,100.0,100.0,100.0" redGreen200 == viewProbe "s.svg" redGreen200
+#guard (viewProbe "s.svg#xywh=100,100,0,100" redGreen200).map (·.1) == some 200
+-- a view specification keeps the image's size and changes what it shows
+#guard viewProbe "s.svg#svgView(viewBox(100,0,100,100))" quadrants == some (200,200,0,255,255)
+#guard viewProbe "s.svg#svgView(transform(scale(2)))" quadrants == some (200,200,255,0,255)
+
 
 /-- The natural width, height and ratio of an SVG image file (`NativeSVGForgiving.naturalSize`);
 none for a file that is not SVG or does not read. -/
