@@ -154,13 +154,16 @@ structure Receipt where
   logs : List LogEntry
   blobGasUsed : Nat
   blobFeeBurn : Nat
+  /-- The account created by a successful creation transaction. -/
+  createdAddress : Option Nat := none
 
 def receiptOf (entry : Entry) (step : Transition) : Receipt :=
   { kind := entry.tx.kind, frame := step.result.frame, receiptStatus := step.result.receiptStatus
     output := step.result.output, charge := step.result.charge
     cumulativeGasUsed := step.result.cumulativeGasUsed
     effectiveGasPrice := step.result.effectiveGasPrice, logs := step.result.logs
-    blobGasUsed := step.blobGasUsed, blobFeeBurn := step.blobFeeBurn }
+    blobGasUsed := step.blobGasUsed, blobFeeBurn := step.blobFeeBurn
+    createdAddress := CallTransaction.createdAddress entry.tx step.result }
 
 def observationBytes (step : Transition) : Nat :=
   step.result.logs.foldl (fun n log => n + log.data.size + 32 * log.topics.length + 20)

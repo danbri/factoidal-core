@@ -21,6 +21,10 @@ structure Account where
   nonce : Nat := 0
   code : Array UInt8 := #[]
   storage : Nat → Nat := fun _ => 0
+  /-- The host's statement that the account's pre-transaction storage is
+      nonempty (a nonempty storage root). The functional `storage` map cannot
+      decide this. Only the EIP-7610 creation-collision check reads it. -/
+  hasStorage : Bool := false
 
 /-- Account presence or absence and storage membership proved by the host. -/
 structure WitnessCoverage where
@@ -57,13 +61,65 @@ structure TxWorld where
   /-- Immutable, ordered transaction context installed by the transaction
       adapter. Neither the signed envelope nor sidecars are authenticated here. -/
   txBlobHashes : Array Word := #[]
+  /-- EIP-1153 transient storage, per account. Journalled with the frame and
+      every CALL/CREATE checkpoint, and empty at every transaction boundary. -/
+  transient : Nat → Nat → Nat := fun _ _ => 0
+  /-- Host-supplied recent block hashes for BLOCKHASH, oldest first. -/
+  blockHashes : Array Nat := #[]
+  /-- Accounts created by CREATE/CREATE2 in this transaction (EIP-6780). -/
+  created : Nat → Bool := fun _ => false
+  /-- Accounts registered by SELFDESTRUCT for deletion at transaction end,
+      most recent first (EIP-6780: only accounts created in this transaction). -/
+  toDelete : List Nat := []
 
-def beginTransaction (accounts : Nat → Account) : TxWorld :=
+/-- The active precompile addresses of a fork: 1 through `limit`, plus
+    P256VERIFY at 0x100 when `p256` (EIP-7951, Osaka). Berlin through Shanghai
+    use limit 9, Cancun 0x0a (EIP-4844), Prague 0x11 (EIP-2537). This is the
+    single definition of the precompile part of the EIP-2929 initial access set. -/
+structure PrecompileSet where
+  limit : Nat
+  p256 : Bool := false
+  deriving DecidableEq, Repr
+
+def PrecompileSet.active (set : PrecompileSet) (address : Nat) : Bool :=
+  decide (1 ≤ address ∧ address ≤ set.limit) || (set.p256 && address == 0x100)
+
+def PrecompileSet.berlin : PrecompileSet := ⟨9, false⟩
+def PrecompileSet.cancun : PrecompileSet := ⟨0x0a, false⟩
+def PrecompileSet.prague : PrecompileSet := ⟨0x11, false⟩
+def PrecompileSet.osaka : PrecompileSet := ⟨0x11, true⟩
+
+/-- A transaction world whose initial access set is exactly the given
+    fork's active precompiles (the transaction entry adds sender, recipient,
+    coinbase and the access list). -/
+def beginTransactionWith (precompiles : PrecompileSet) (accounts : Nat → Account) : TxWorld :=
   { accounts := accounts
     original := fun address slot => (accounts address).storage slot
-    -- EIP-2929's fixed precompile list belongs to the initial access set.
-    -- This execution subset still models historical forks incompletely.
-    warmAddresses := fun address => decide (1 ≤ address ∧ address ≤ 9) }
+    warmAddresses := precompiles.active }
+
+/-- Fixture worlds without a selected fork use the Berlin-to-Shanghai set. -/
+def beginTransaction (accounts : Nat → Account) : TxWorld :=
+  beginTransactionWith .berlin accounts
+
+/-- Kind: transaction boundary (EIP-2929).
+    Says: every active precompile of the selected set is warm when a
+    transaction world is created, and no other address is.
+    Does not say: which set a given fork selects (see `CallTransaction.Fork.precompiles`). -/
+theorem beginTransactionWith_warm (set : PrecompileSet) (accounts : Nat → Account) (address : Nat) :
+    (beginTransactionWith set accounts).warmAddresses address = set.active address := rfl
+
+/-- Kind: specification check.
+    Says: the Osaka set contains P256VERIFY (0x100) and the BLS12-381 range
+    through 0x11, and the Cancun set ends at point evaluation (0x0a).
+    Does not say: that each precompile is implemented. -/
+theorem precompileSet_members :
+    PrecompileSet.osaka.active 0x100 = true ∧ PrecompileSet.osaka.active 0x11 = true ∧
+    PrecompileSet.osaka.active 0x12 = false ∧ PrecompileSet.cancun.active 0x0a = true ∧
+    PrecompileSet.cancun.active 0x0b = false ∧ PrecompileSet.cancun.active 0x100 = false ∧
+    PrecompileSet.berlin.active 0x0a = false := by decide
+
+#print axioms beginTransactionWith_warm
+#print axioms precompileSet_members
 
 /-- The identity precompile is initially warm on EIP-2929-era transactions,
     independent of whether any CALL has yet executed. -/
@@ -104,6 +160,7 @@ def frameInput (w : TxWorld) (address gas : Nat)
     blockBaseFee := w.blockBaseFee
     blockBlobBaseFee := w.blockBlobBaseFee
     txBlobHashes := w.txBlobHashes
+    blockHashes := w.blockHashes
     logsRev := w.logsRev
     keccakAcceptance := w.keccakAcceptance
     callerAddress := callerAddress
@@ -116,6 +173,7 @@ def frameInput (w : TxWorld) (address gas : Nat)
       current := (w.accounts address).storage
       warm := w.warmSlots address
       refund := w.refund
+      transient := w.transient address
     } }
 
 /-- The executing address and its pre-instruction balance come from the
@@ -208,6 +266,7 @@ def commitFrame (w : TxWorld) (address : Nat) (out : State) : TxWorld :=
     warmSlots := fun other key =>
       if other = address then out.storage.warm key else w.warmSlots other key
     refund := out.storage.refund
+    transient := fun other => if other = address then out.storage.transient else w.transient other
     logsRev := out.logsRev }
 
 /-- Kind: transaction-context preservation.

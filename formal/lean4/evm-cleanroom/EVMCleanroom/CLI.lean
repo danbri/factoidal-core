@@ -7,6 +7,7 @@ import EVMCleanroom.CLIEncoding
 import EVMCleanroom.TxAccounting
 import EVMCleanroom.PragueEnvelope
 import EVMCleanroom.FrontierTransfer
+import EVMCleanroom.WorldCLI
 
 /-!
 A minimal machine-readable entry point for the *restricted* EVM model.
@@ -720,6 +721,8 @@ def cliMain (args : List String) : IO UInt32 := do
   | "--pure-frame-call" :: rest => frameCallMain rest true observeLogs acceptance
   | "--call-opcode" :: rest => callOpcodeMain rest observeLogs acceptance
   | "--call-slice" :: rest => callSliceMain rest
+  | "--world" :: rest => WorldCLI.worldMain acceptance rest
+  | ["--world-batch", path] => WorldCLI.worldBatchMain acceptance path
   | ["--storage-batch", path] => storageBatchMain path
   | ["--batch", path] => runBatchFile path
   | ["--osaka-batch", path] => runBatchFile path .osaka

@@ -272,7 +272,7 @@ transaction execution and consensus unverified.
 ## Witness-limited call transactions
 
 `evm-subset --call-transaction REQUEST.json` accepts a normalised type-0,
-type-1 or type-2 call envelope, Shanghai or Cancun block context, and the
+type-1 or type-2 call or contract-creation envelope, Shanghai or Cancun block context, and the
 address and slot witnesses used by execution. Lean checks admission,
 derives the intrinsic gas and effective price, escrows fees, executes the
 call frames and settles the gas refund, burn and beneficiary tip. An
@@ -310,6 +310,56 @@ root after the transaction and checks the target storage root against
 its independently proven final-block value.
 [Mainnet replay record](../../../docs/20261122-evm-shanghai-contract-replay.md) ·
 [Transaction and audit evidence](../../../docs/20261122-evm-call-transaction-evidence.md)
+
+### Contract-creation transactions
+
+A type-0, type-1 or type-2 transaction without a destination creates a
+contract, following EELS `validate_transaction`, `calculate_intrinsic_cost`,
+`prepare_message`, `process_message_call` and `process_create_message`
+(Shanghai and Cancun). In the JSON request, `"to": null` (or no `to` field)
+marks a creation and `dataHex` is the initcode; the host never supplies the
+new address. Lean derives it as the low 160 bits of the hash of
+`rlp([sender, nonce])`, with the nonce the sender holds before the
+transaction, so the run needs the experimental Keccak opt-in and otherwise
+gives an indeterminate `unsupportedFork`. The new address must be among the
+witnessed accounts (as a proved absence, which may list zero-valued slots to
+observe what the constructor stores); without it the result is an
+indeterminate `incompleteState` naming the address.
+
+Admission adds 32000 gas and 2 gas per 32-byte word of initcode (EIP-3860) to
+the intrinsic gas and rejects initcode above 49152 bytes
+(`initcode-too-large`). A type-3 creation is rejected (`blob-creation`);
+type 4 is not executed by any entry point. After fee escrow and the sender's
+nonce increment, a target that already has a nonce, code or storage
+(EIP-684, EIP-7610; storage is known only from a listed nonzero slot) gives a
+failed receipt that uses all the gas. Otherwise the account is prepared and
+endowed with the same `Create.enter` as the `CREATE` instructions, the
+initcode runs in the ordinary dispatcher at depth 0 with all the execution
+gas, and the same deposit rules apply (24576 bytes, no 0xEF first byte, 200
+gas per byte). A failed deposit, an exceptional halt and a REVERT all settle
+on the escrow world: the sender has paid and its nonce is incremented, and
+nothing else changed. An executed creation reports `createdAddress`: the
+address as a decimal string, or `null` when the creation failed. A list
+receipt carries `createdAddress` only for a successful creation. The signed
+raw-transaction entry point (`evm-raw-signed`) still refuses creations.
+[Creation path](EVMCleanroom/CallTransaction.lean) (`runCreation`) ·
+[Theorems](EVMCleanroom/CreateTransactionProofs.lean) ·
+[Guards](EVMCleanroom/CreateTransactionTests.lean)
+
+The theorems cover the intrinsic gas, the initcode-size rejection, the
+address formula of every receipt-producing run, the collision outcome, the
+success equation (code set, remaining gas through the usual settlement) and
+the rollback of every failure to the escrow world. They do not say that the
+experimental hash is Keccak-256 or that the rules equal EELS; that is tested:
+[`create-transaction-differential.mjs`](scripts/eels/create-transaction-differential.mjs)
+compares 51 signed creations with EthereumJS `runTx` as an oracle (receipt
+bytes and state root), 5 admission rejections, the 49153-byte rejection, 3
+witness and resource refusals, 3 code-deposit gas boundaries (exact gas and
+one unit less) and a sequence of three creations by one sender, with 6
+comparator negative controls. Nonce progression inside one
+`TransactionList` run is a Lean guard in
+[TransactionListTests](EVMCleanroom/TransactionListTests.lean), not a
+differential case.
 
 ## External executable interface and first official-fixture integration
 
@@ -451,10 +501,111 @@ charging. This does not prove EELS equivalence or world-state rollback.
 `CALLDATALOAD`, `CALLDATASIZE`, `CALLDATACOPY`, `CODESIZE`, `CODECOPY`,
 `RETURNDATASIZE`, `RETURNDATACOPY`, `SELFBALANCE`, `BLOBHASH`, `BLOBBASEFEE`, `POP`,
 `JUMP`, `JUMPI`, `PC`, `GAS`, `JUMPDEST`, `MLOAD`, `MSTORE`, `MSTORE8`, `MSIZE`,
-`PUSH0`, `PUSH1..32`, `DUP1..16`, `SWAP1..16`, `SLOAD`, `SSTORE`, `LOG0..4`
-and opt-in `KECCAK256`.
+`PUSH0`, `PUSH1..32`, `DUP1..16`, `SWAP1..16`, `SLOAD`, `SSTORE`, `LOG0..4`,
+`BLOCKHASH`, `TLOAD`, `TSTORE`, `MCOPY` and opt-in `KECCAK256`.
 A separate `Frame.run` handles `RETURN` and `REVERT` and `CallOpcode.run`
-handles the restricted `CALL`, `CALLCODE`, `DELEGATECALL` and `STATICCALL` paths.
+handles the restricted `CALL`, `CALLCODE`, `DELEGATECALL` and `STATICCALL` paths,
+the world-reading `BALANCE`, `EXTCODESIZE`, `EXTCODECOPY` and `EXTCODEHASH`,
+`CREATE` and `CREATE2`, and `SELFDESTRUCT` (EIP-6780).
+
+The EIP-2929 initial access set is built from one definition,
+`World.PrecompileSet` (Berlin–Shanghai 1–9, Cancun 1–0x0a, Prague 1–0x11,
+Osaka adds P256VERIFY at 0x100), selected per fork by
+`CallTransaction.Fork.precompiles`; the transaction entry adds the sender,
+recipient, coinbase (EIP-3651) and access list
+(`AccountTransient.witnessWorld_warm_exact`, `entry_precompiles_warm`).
+
+The account instructions charge EIP-2929 warm/cold access (100/2600 gas) and
+warm their target in the checkpointed world, so a failed child's warm-ups are
+discarded. `EXTCODEHASH` returns zero for an empty account and needs the
+Keccak opt-in. `BLOCKHASH` reads a host-supplied list of the 256 most recent
+hashes; a hash inside the window that was not supplied is refused, never
+guessed. EIP-1153 transient storage is per account in the transaction world,
+saved in every CALL checkpoint (rolled back with a failed child or entry
+frame) and empty at the start of every transaction; `TSTORE` is refused in a
+static frame. `MCOPY` charges both windows' expansion and copies from a
+snapshot, so overlapping ranges behave as a temporary buffer. `TLOAD`,
+`TSTORE` and `MCOPY` require the Cancun or Osaka profile; the account
+instructions refuse on the coarse pre-Shanghai profile, which spans their
+repricings. Theorems: [Core](EVMCleanroom/Core.lean) (`step_tload`,
+`step_tstore*`, `step_mcopy*`, `step_blockHash_*`),
+[AccountOpcode](EVMCleanroom/AccountOpcode.lean),
+[AccountTransientProofs](EVMCleanroom/AccountTransientProofs.lean) and the
+dispatcher links in [CallOpcode](EVMCleanroom/CallOpcode.lean)
+(`executeAtDepth_account`, `resumeChild_failure_transient`,
+`beginCall_checkpoint_transient`), audited by
+[`check-opcode-axioms.py`](scripts/check-opcode-axioms.py). Differential
+matrix: [`account-transient.mjs`](scripts/differential/account-transient.mjs)
+(117 cases against EthereumJS Cancun as an oracle, with gas boundary pairs and
+negative controls), through the `evm-subset --world` test entry point.
+
+`CREATE` and `CREATE2` (Shanghai, Cancun and Osaka profiles; refused on the
+coarse pre-Shanghai profile) follow EELS `create`, `create2`,
+`generic_create` and `process_create_message`. The instruction charges 32000
+gas, the memory expansion of the initcode window and 2 gas per initcode word
+(EIP-3860), plus 6 gas per word for the CREATE2 hash; a window above 49152
+bytes is then an out-of-gas halt and a static frame a write-protection halt.
+The child gets all but one 64th of the remaining gas. An endowment above the
+creator's balance, a creator nonce of 2^64-1 or a child depth above 1024 is a
+soft failure: zero is pushed, the child gas comes back, and neither the nonce
+nor the warm set changes. Otherwise the address (`keccak(rlp([sender,
+nonce]))` or the EIP-1014 preimage, low 160 bits) is warmed, and a target
+with code, a nonce or storage (EIP-684, EIP-7610; storage by the host's
+`hasStorage` statement) is a collision: the creator's nonce rises, zero is
+pushed and the child gas is consumed. An entered creation raises the
+creator's nonce (this world is the checkpoint), marks the new account as
+created in the transaction (EIP-6780), gives it nonce 1 and empty storage,
+moves the endowment and runs the initcode as the frame's code with empty
+calldata. Successful initcode deposits its output as code unless it is longer
+than 24576 bytes (EIP-170), starts with 0xEF (EIP-3541) or the child cannot
+pay 200 gas per byte; such a deposit failure and an exceptional halt both
+restore the checkpoint and return no gas, and a REVERT restores it and
+returns its gas and data. The address derivations need the experimental
+Keccak opt-in, and in witness mode the creator and the new address must be
+covered. The created mark is rolled back with a failed creation; EELS keeps
+its marker until the transaction ends, which differs only for an account that
+runs code without being created again, and a rolled-back address has no code.
+Theorems: [Create](EVMCleanroom/Create.lean) (charge, child gas, preimage
+shapes, deposit rules, world effects) and
+[CallOpcode](EVMCleanroom/CallOpcode.lean) (`beginCreate_*`,
+`enterCreate_*`, `resumeCreate_*`, `executeAtDepth_create_*`). They do not say
+that the experimental hash is Keccak-256, that the CREATE preimage encoding
+is injective, or that a whole creation run terminates; those are tested.
+Guards: [CreateTests](EVMCleanroom/CreateTests.lean). Differential matrix:
+[`create.mjs`](scripts/differential/create.mjs) (292 cases against EthereumJS
+as an oracle, 32 gas-boundary pairs, five negative controls).
+
+`SELFDESTRUCT` (0xff) follows EIP-6780 on the Cancun and Osaka profiles only;
+`shanghaiPlus` spans the Cancun boundary and refuses it, as does the
+pre-Shanghai profile. It charges 5000 gas, plus 2600 for a cold beneficiary
+(then warm), plus 25000 when the beneficiary is not alive and the executing
+account has a balance; a static frame fails after the charge. The whole
+balance moves to the beneficiary. Only an account created in the same
+transaction has its balance zeroed (a self-beneficiary burns it) and is
+registered in the world's `toDelete` list, which every CALL checkpoint and
+the entry checkpoint roll back; any other account keeps its code, storage and
+nonce. `CallTransaction.settleFrame` deletes the registered accounts of a
+successful frame after the sender refund and the fee-recipient tip
+(`SelfDestruct.destroyRegistered`), as EELS does. Theorems:
+[SelfDestruct](EVMCleanroom/SelfDestruct.lean) (gas, static frame, warmth,
+both originator classes, per-instruction registration invariant, transaction
+end), the dispatcher links in [CallOpcode](EVMCleanroom/CallOpcode.lean)
+(`executeAtDepth_selfDestruct*`, `executeLoop_selfDestruct_child`,
+`resumeChild_failure_registration`, `settle_failure_registration`) and
+`settleFrame_success_destroys` in
+[CallTransactionProofs](EVMCleanroom/CallTransactionProofs.lean). Not proved:
+that every dispatcher transition preserves "each registered address carries
+the created flag" (no other transition writes either field; the step theorem
+covers the only writer). The created flag is set by `CREATE`/`CREATE2` (and by the test adapter's
+account flag).
+Differential matrix: [`selfdestruct.mjs`](scripts/differential/selfdestruct.mjs)
+(230 cases against EthereumJS Cancun and Osaka as an oracle, 44 of them
+creating the contract with `CREATE` or `CREATE2` in the same frame, seven gas
+boundary pairs, 24 hand-computed expectations and six negative controls).
+One ordering difference from the oracle is checked by hand against EELS:
+an underfunded SELFDESTRUCT in a static frame is out of gas here and in
+EELS, and a write-protection failure in EthereumJS; both halt the frame
+exceptionally with no gas left.
 
 `PUSH0` is gated by the coarse pre-/post-Shanghai profiles. The pre-Shanghai
 profile leaves activation of `SHL`, `SHR`, `RETURNDATASIZE` and
@@ -485,8 +636,9 @@ misrepresented as proofs.
 
 After that: independently reviewed EELS memory-opcode refinement,
 JUMPDEST conformance to EELS, external semantic refinement of the new
-storage/frame slices and nested CALL checkpoints, contract
-creation, receipts, fork transitions and ultimately a full execution client.
+storage/frame slices and nested CALL checkpoints, creation
+through signed raw transactions, receipts, fork transitions and ultimately a
+full execution client.
 
 Sources: [EELS](https://github.com/ethereum/execution-specs),
 [EthLib](https://github.com/ethereum/EthLib),

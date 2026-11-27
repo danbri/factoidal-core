@@ -127,7 +127,9 @@ theorem commit_original_unchanged {s out : State} {pc cost : Nat}
   split at h
   · split at h
     · cases h
-      rfl
+      cases nextStorage with
+      | none => rfl
+      | some planned => by_cases hs : s.readOnly <;> simp [hs]
     · cases h
   · cases h
 
@@ -143,7 +145,7 @@ theorem commit_static_current_unchanged {s out : State} {pc cost : Nat}
   split at h
   · split at h
     · cases h
-      simp
+      cases nextStorage <;> simp [hs]
     · cases h
   · cases h
 

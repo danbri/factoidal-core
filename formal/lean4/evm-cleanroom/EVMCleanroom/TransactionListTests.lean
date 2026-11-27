@@ -266,4 +266,27 @@ private def transition (size : Nat) : Transition :=
   | .error (.indeterminate (.frame .resourceLimit)) => true
   | _ => false
 
+/-- Three creations by one sender in one list: the sender nonce and therefore
+    the derived address advance inside Lean; only the three absences are
+    supplied up front. Empty initcode costs exactly 53000 gas each. -/
+private def creationEntry (nonce : Nat) : Entry :=
+  { (entry nonce) with tx := CallTransaction.Envelope.creation (some acceptance) (entry nonce).tx }
+
+private def creationAddresses : List Nat :=
+  [0, 1, 2].map (Create.createAddress acceptance 0x1000)
+
+private def creationInput : Input :=
+  let p := input ([0, 1, 2].map creationEntry) (3 * 53000)
+  { p with initialWitnesses := p.initialWitnesses ++ creationAddresses.map fun address =>
+      { address, present := false, balance := 0, nonce := 0, code := #[], storage := [] } }
+
+#guard creationAddresses.Nodup
+#guard accepted creationInput (fun r =>
+  r.receipts.map (·.createdAddress) == creationAddresses.map some &&
+  r.receipts.all (·.receiptStatus) && r.gasUsed == 3 * 53000 &&
+  accountIs r 0x1000 (fun w => w.nonce == 3) &&
+  creationAddresses.all (fun address => accountIs r address (fun w => w.present && w.nonce == 1)))
+-- A call receipt in a list reports no created address.
+#guard accepted (input [entry 0] 21000 (code := #[])) (fun r => r.receipts.all (·.createdAddress.isNone))
+
 end EVMCleanroom.TransactionListTests

@@ -58,12 +58,17 @@ jobs:
       - name: Verify active source blobs and theorem inventory against v2 evidence
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==324 and x["files"]==186,x'
+          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==324 and x["files"]==189,x'
       - name: Run the Lean compiler and compare actual theorem axioms to the v2 ledger
         working-directory: formal/lean4/evm-cleanroom
         run: |
           python3 scripts/check-axiom-output.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==5,x'
           python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==324 and x["sourceFiles"]==30,x'
+      - name: Audit the instruction-set theorem axioms (BALANCE/EXTCODE*/BLOCKHASH/TLOAD/TSTORE/MCOPY/CREATE/CREATE2/SELFDESTRUCT)
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          python3 scripts/check-opcode-axioms.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==6,x'
+          python3 scripts/check-opcode-axioms.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match" and x["theorems"]==121 and x["sources"]==10,x'
       - name: Check executable Lean Prague type-3/4 fee and EIP-7702 delegation API boundaries
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -234,6 +239,29 @@ jobs:
           set -euo pipefail
           mkdir -p .lake/differential
           node scripts/differential/blob-base-fee.mjs | tee .lake/differential/blob-base-fee.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==42 and x["mismatches"]==0 and x["ambiguousOldForkRefused"] and all(x["negativeControls"].values()),x'
+      - name: Compare world-aware BALANCE, EXTCODE*, BLOCKHASH, TLOAD/TSTORE and MCOPY against EthereumJS Cancun
+        timeout-minutes: 5
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          mkdir -p .lake/differential
+          node --check scripts/differential/account-transient.mjs
+          node scripts/differential/account-transient.mjs .lake/build/bin/evm-subset | tee .lake/differential/account-transient.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==125 and x["mismatches"]==0 and x["gasBoundaryPairs"]==10 and x["independentGas"] and all(x["negativeControls"].values()) and not x["firstFailures"],x'
+      - name: Compare world-aware CREATE and CREATE2 against EthereumJS Shanghai, Cancun and Osaka
+        timeout-minutes: 5
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          mkdir -p .lake/differential
+          node --check scripts/differential/create.mjs
+          node scripts/differential/create.mjs .lake/build/bin/evm-subset | tee .lake/differential/create.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==292 and x["mismatches"]==0 and x["gasBoundaryPairs"]==32 and x["independentGas"] and all(x["leanOnly"].values()) and all(x["negativeControls"].values()) and len(x["negativeControls"])==5 and x["profiles"]=={"shanghaiPlus":2,"cancunPlus":153,"osaka":137} and not x["firstFailures"],x'
+      - name: Compare SELFDESTRUCT (EIP-6780) and transaction-end deletion against EthereumJS
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          mkdir -p .lake/differential
+          node --check scripts/differential/selfdestruct.mjs
+          node scripts/differential/selfdestruct.mjs .lake/build/bin/evm-subset | tee .lake/differential/selfdestruct.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==230 and x["mismatches"]==0 and x["categories"]["e2e"]==44 and x["gasBoundaryPairs"]==7 and x["independentChecks"]==24 and x["independentHeld"] and all(x["eelsOrderChecks"].values()) and len(x["negativeControls"])==6 and all(x["negativeControls"].values()) and not x["firstFailures"],x'
       - name: Compare calldata, unsigned word operations and bounded frame output against EthereumJS
         shell: bash
         working-directory: formal/lean4
@@ -416,6 +444,15 @@ jobs:
           node scripts/eels/call-transaction-differential.mjs "$PWD/.lake/build/bin/evm-subset" \
             | tee .lake/eels/call-transaction-differential.json \
             | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==x["receiptAndStateRootMatches"]==60 and x["independentAdmissionRejections"]==8 and x["preSerializationRejections"]==1 and x["boundaryRefusals"]==11 and x["negativeControls"]=={"changedGas":True,"changedReceiptLog":True,"changedStateBalance":True} and not x["failures"],x'
+      - name: Compare contract-creation transactions and their roots with EthereumJS
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          mkdir -p .lake/eels
+          node --check scripts/eels/create-transaction-differential.mjs
+          node scripts/eels/create-transaction-differential.mjs "$PWD/.lake/build/bin/evm-subset" \
+            | tee .lake/eels/create-transaction-differential.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==x["receiptAndStateRootMatches"]==51 and x["independentAdmissionRejections"]==5 and x["oversizeInitcodeRejections"]==1 and x["boundaryRefusals"]==3 and x["gasBoundaryTriples"]==3 and x["sequenceCreations"]==3 and x["negativeControls"]=={"changedGas":True,"changedCreatedAddress":True,"droppedCreatedAddress":True,"changedDeployedCode":True,"changedDeployedCodeRoot":True,"changedSenderNonce":True} and not x["failures"],x'
       - name: Replay the authenticated Shanghai mainnet contract transaction with Lean, EthereumJS and Geth
         working-directory: formal/lean4/evm-cleanroom
         run: |

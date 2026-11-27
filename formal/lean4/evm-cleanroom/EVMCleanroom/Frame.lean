@@ -50,6 +50,7 @@ private def errorOutcome (e : Error) : RawOutcome :=
   | .resourceLimit | .incompleteState _ _ => .unsupported e
   | .framePolicyViolation _ => .unsupported e
   | .stepLimit => .unsupported e
+  | .missingBlockHash _ => .unsupported e
   | .invalidOpcode byte =>
     if byte == 0xfe then .exceptional e
     else .unsupported e
