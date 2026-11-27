@@ -2055,7 +2055,7 @@ def prepare (bytes : ByteArray) (lim : Limits := {}) : Except String Module' := 
 document with `html`, `head` and `body` and no doctype. -/
 def aboutBlank : Arena := Id.run do
   let el := fun (d : Arena) (name : String) => d.create { type := .element, doc := 0, ns := some L4Factoidal.DOM.htmlNS, lname := name }
-  let d : Arena := { nodes := #[{ type := .document, doc := 0 }] }
+  let d : Arena := { nodes := #[{ type := .document, doc := 0, quirks := true }] }
   let (d, html) := el d "html"
   let d := d.linkChild 0 html none
   let (d, head) := el d "head"
