@@ -3925,6 +3925,9 @@ structure Engine where
   /-- The rendering tasks of the real-time `AudioContext`s of this engine's page sessions, by
   (session, context) (`WebAudio.Realtime`; plan 13.3, issue 1169). -/
   audioTasks : L4Factoidal.WebAudio.Realtime.Tasks := {}
+  /-- The audio output (`Realtime.device`), asked at the first `scriptSession` call: `none` not
+  asked yet. -/
+  audioDevice : Option (Option (String × Float × Nat)) := none
   /-- The layouts of the last keys (`lookupLayout`). -/
   layouts : Lru LayoutKey Laid := []
   /-- Frames with a pointer state painted on a kept layout (`paintedSlots`). -/
@@ -4699,9 +4702,8 @@ def audioBefore (tasks : L4Factoidal.WebAudio.Realtime.Tasks) (held : WebScripts
 
 /-- After an action: the outboxes go to the tasks (a new context gets one), and the tasks of a
 session that is no longer held are stopped (navigation, a closed tab). -/
-def audioAfter (tasks : L4Factoidal.WebAudio.Realtime.Tasks) (held : WebScripts.Held) :
+def audioAfter (dev : Option (String × Float × Nat)) (tasks : L4Factoidal.WebAudio.Realtime.Tasks) (held : WebScripts.Held) :
     BaseIO (L4Factoidal.WebAudio.Realtime.Tasks × WebScripts.Held) := do
-  let dev ← L4Factoidal.WebAudio.Realtime.device
   let ref ← IO.mkRef tasks
   let held ← audioHosts held fun sid h => do
     let a := h.web.audio
@@ -4718,9 +4720,9 @@ def audioAfter (tasks : L4Factoidal.WebAudio.Realtime.Tasks) (held : WebScripts.
 
 /-- The start request with the audio output's rate and channels (`WebScripts.audioStart`), when the
 engine has one. -/
-def withAudioDevice (j : JSON.Json) : BaseIO JSON.Json := do
+def withAudioDevice (dev : Option (String × Float × Nat)) (j : JSON.Json) : BaseIO JSON.Json := do
   if str j "action" != "start" then return j
-  match ← L4Factoidal.WebAudio.Realtime.device, j with
+  match dev, j with
   | some (_, rate, ch), .object fs =>
     return .object (fs ++ [("audioDeviceRate", .number (toString rate.toUInt64.toNat)),
                            ("audioDeviceChannels", .number (toString ch))])
@@ -4731,10 +4733,14 @@ after. Other calls are `k` itself. -/
 def audioAround {α : Type} (e : Engine) (j : JSON.Json) (k : Engine → JSON.Json → BaseIO (Engine × α)) :
     BaseIO (Engine × α) := do
   if str j "op" != "scriptSession" then return ← k e j
-  let j ← withAudioDevice j
+  let dev ← match e.audioDevice with
+    | some d => pure d
+    | none => L4Factoidal.WebAudio.Realtime.device
+  let e := { e with audioDevice := some dev }
+  let j ← withAudioDevice dev j
   let (tasks, scripts) ← audioBefore e.audioTasks e.scripts
   let (e, r) ← k { e with audioTasks := tasks, scripts } j
-  let (tasks, scripts) ← audioAfter e.audioTasks e.scripts
+  let (tasks, scripts) ← audioAfter dev e.audioTasks e.scripts
   return ({ e with audioTasks := tasks, scripts }, r)
 
 /-- A render answer with no Base64 (issue 1268): the JSON head, and the storage floats
