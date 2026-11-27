@@ -19,6 +19,7 @@ import WebSparql
 import WebScripts
 import WebAudioRun
 import L4Factoidal.Net.Subresource
+import L4Factoidal.Net.Navigation
 import L4Factoidal.Prim.Bytes
 import L4Factoidal.Rendering.SfntProfile
 import L4Factoidal.FrameCost.Band
@@ -3943,6 +3944,8 @@ structure Engine where
   kept : Kept := {}
   /-- The document's subresource requests in progress (`subresource`, Net.Subresource). -/
   subs : Net.Subresource.Table := {}
+  /-- The top-level navigations in progress (`navigation`, Net.Navigation). -/
+  navs : Net.Navigation.Table := {}
   /-- Image requests in progress whose URL is of their document's origin, by transfer id
   (`Engine.subresource`). -/
   subImages : List (Nat × String) := []
@@ -4170,7 +4173,9 @@ def subresourceJson : Net.Subresource.Out → JSON.Json
 /-- Op `subresource` (Net.Subresource): a document's element request, one step a call.
 `start`: `kind` (its destination), `url`, `documentURL`, `referrerPolicy` (the element's
 `referrerpolicy` or the document's; "" for the default), `crossorigin` ("", "anonymous",
-"use-credentials"), `hostCors` and `address` as for `scriptSession start`. `answer`: `id` and
+"use-credentials"), `hostCors` and `address` as for `scriptSession start`, `tor` (`true`: Tor
+mode, `Net.PageFetch.Page.tor`; every wire is marked `tor` with the document's origin as its
+partition, theorems `NavigationTheorems.Sub.start_tor` and `answer_tor`). `answer`: `id` and
 the host's `answer` to the wire (as action `net` gives one; the body may be left out: the
 host keeps the bytes). `cancel`: `id`. The referrer is the document's URL. -/
 def subresourceOp (tab : Net.Subresource.Table) (request : JSON.Json) : Net.Subresource.Table × Option Net.Subresource.Out × String :=
@@ -4178,6 +4183,7 @@ def subresourceOp (tab : Net.Subresource.Table) (request : JSON.Json) : Net.Subr
   | "start" =>
     let doc := str request "documentURL"
     let page := Net.PageFetch.Page.ofUrl doc (request.field? "hostCors" == some (.bool true)) (str request "address")
+      (request.field? "tor" == some (.bool true))
     let policy := (Net.ReferrerPolicy.Policy.ofToken (str request "referrerPolicy")).getD .default
     let cors := match str request "crossorigin" with
       | "" => none
@@ -4194,6 +4200,44 @@ def subresourceOp (tab : Net.Subresource.Table) (request : JSON.Json) : Net.Subr
     let id := match request.field? "id" with | some (.number n) => n.toNat?.getD 0 | _ => 0
     (Net.Subresource.cancel tab id, none, "{}")
   | _ => (tab, none, "{\"error\":\"subresource: unknown action\"}")
+
+/-- An answer of op `navigation`: the request for the host to make, done, or failed. -/
+def navigationJson : Net.Navigation.Out → JSON.Json
+  | .wire id w => .object [("id", WebScripts.num id), ("wire", WebScripts.wireJson w)]
+  | .done id st ty u n =>
+    .object [("id", WebScripts.num id), ("done", .object [("status", WebScripts.num st), ("type", .string ty),
+      ("url", .string u), ("redirects", WebScripts.num n)])]
+  | .fail id why => .object [("id", WebScripts.num id), ("fail", .string why)]
+
+/-- Op `navigation` (Net.Navigation): a top-level navigation with its redirects, one step a call
+(https://github.com/danbri/factoidal-core/issues/1060). `start`: `url`, `method` ("GET" or
+"POST"; "" is "GET"), `initiator` (the URL of the document that started it, "" for a typed or
+chosen address), `referrerPolicy` (the initiator's; "" for the default), for a form post
+`bodyBase64` and `bodyType`, and `tor` (`true`: Tor mode; every wire is marked `tor`, and every
+hop of one navigation has the partition of its first URL's origin, theorems
+`NavigationTheorems.Nav.start_tor`, `answer_tor`, `answer_partition`). `answer`: `id` and the
+host's `answer` to the wire. `cancel`: `id`. The host keeps the bytes and fields of the last
+answer; the wires carry no cookie (gap, issue 1060). -/
+def navigationOp (tab : Net.Navigation.Table) (request : JSON.Json) : Net.Navigation.Table × String :=
+  match str request "action" with
+  | "start" =>
+    let method := match str request "method" with | "" => "GET" | m => m
+    let policy := (Net.ReferrerPolicy.Policy.ofToken (str request "referrerPolicy")).getD .default
+    let body := match request.field? "bodyBase64" with
+      | some (.string b) => WHATWG.Base64.decode b
+      | _ => none
+    let (tab, o) := Net.Navigation.start tab (str request "url") method (str request "initiator") policy body
+      (str request "bodyType") (request.field? "tor" == some (.bool true))
+    (tab, (navigationJson o).toString)
+  | "answer" =>
+    let id := match request.field? "id" with | some (.number n) => n.toNat?.getD 0 | _ => 0
+    let (_, a) := WebScripts.netAnswer ((request.field? "answer").getD .null)
+    let (tab, o) := Net.Navigation.answer tab id a
+    (tab, (navigationJson o).toString)
+  | "cancel" =>
+    let id := match request.field? "id" with | some (.number n) => n.toNat?.getD 0 | _ => 0
+    (Net.Navigation.cancel tab id, "{}")
+  | _ => (tab, "{\"error\":\"navigation: unknown action\"}")
 
 /-- Most image URLs `Engine.opaqueImages` holds. -/
 def maxOpaqueImages : Nat := 4096
@@ -4246,6 +4290,9 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
   -- A document's subresource requests go through the engine's network rules, step by step.
   if str request "op" == "subresource" then
     return (← stepState fun e => let (e, r) := e.subresource request; (e, .ok r),#[])
+  -- A top-level navigation's requests, with its redirects, go through the same rules (Tor mode too).
+  if str request "op" == "navigation" then
+    return (← stepState fun e => let (navs, r) := navigationOp e.navs request; ({ e with navs }, .ok r),#[])
   -- What a navigation's response does: shown as a page, or saved as a download under a safe
   -- name (`Net.Subresource.navigated`, theorem `safeName_safe`). The host asks before it reads
   -- the body.

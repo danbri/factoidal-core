@@ -789,3 +789,54 @@ Rules for Tor mode, all four before Settings offers it:
 
 Until then the Tor path is reachable only through the test flag
 `--dangerously-use-unreviewed-tor-transport`, never from Settings.
+
+#### 21a.1 Lean decisions for navigations and subresources (2026-11-27)
+
+Rule 2 for the two loads that had no Lean decision in Tor mode. The host is not wired to them
+yet (`readSource` in `native_html_document.ts` still fetches navigations itself); another step
+does that.
+
+- Subresources (images, style sheets, fonts, media): WebDocument op `subresource` takes
+  `"tor": true` in `start`, which sets `Page.tor` of the document's page. Every wire then carries
+  `"tor": true` and `"partition"`: the document's origin.
+- Top-level navigations with their redirects: new WebDocument op `navigation`
+  (`formal/lean4/L4Factoidal/Net/Navigation.lean`), one step a call, with the `Net.PageFetch`
+  transfer (`plan`, `emit`, `onAnswer`, `wireReach`) and destination `document`:
+
+  ```
+  {"op":"navigation","action":"start","url":U,"method":"GET"|"POST","initiator":I,
+   "referrerPolicy":P,"bodyBase64":B,"bodyType":T,"tor":true}
+  {"op":"navigation","action":"answer","id":N,"answer":{"id":N,"status":S,"headers":[[n,v]],"addresses":[...]}}
+  {"op":"navigation","action":"cancel","id":N}
+  ```
+
+  Each answer is `{"id":N,"wire":{...}}` (make this request), `{"id":N,"done":{"status":S,
+  "type":T,"url":U,"redirects":R}}` (the last answer is the response) or `{"id":N,"fail":why}`.
+  A `POST` needs a form body type (`application/x-www-form-urlencoded`, `multipart/form-data`,
+  `text/plain`). A 303, or a 301 or 302 after a `POST`, continues as `GET` with no body (Fetch
+  §4.4). At most `maxRedirects` (20) redirects. A first URL or a redirect that is not `http` or
+  `https` fails. In direct mode a `.onion` URL fails (`mayConnect`). A navigation is not mixed
+  content: an `https` page may redirect to `http`. The wire says `Sec-Fetch-Mode: navigate`,
+  `Sec-Fetch-Site` against the initiator (`none` when the person typed the address), and a
+  `POST` has the initiator's `Origin` on the first hop and `null` after a redirect.
+- Partition choice (coordinator's, not the owner's): the page of a navigation is the target
+  document's own origin, because a top-level navigation makes its own top-level site. The page is
+  built from the navigation's first URL and stays fixed over its redirects, so every hop of one
+  navigation carries the partition of the origin of its first URL: one navigation keeps one
+  circuit set over its redirects. The next navigation (to the final URL's site) gets that site's
+  partition.
+- Cookies: the navigation wires carry no `Cookie` field and the engine stores no `Set-Cookie`.
+  `PageFetch`'s jar decides `SameSite` against the page; a navigation's rule is against its
+  initiator (`Cookies.navCookie`), so that jar is not used. Gap:
+  https://github.com/danbri/factoidal-core/issues/1060 (Tor in Foafnaut), expected failure in
+  `labs/demos/foafnaut/tor-wasm/deno/tor.test.ts`.
+- Theorems (`formal/lean4/L4Factoidal/Net/NavigationTheorems.lean`, axioms `propext`,
+  `Classical.choice`, `Quot.sound` only): `Nav.start_tor` and `Nav.answer_tor` (in Tor mode every
+  wire has `resolve = false`, `address = ""`, `tor = true`, a partition that is not `"null"`);
+  `Nav.answer_partition` with `Nav.start_inv`, `Nav.answer_inv`, `Nav.cancel_inv` and
+  `Nav.navPage_origin` (every hop of one navigation has the partition of its first URL's origin);
+  `Nav.start_direct`, `Nav.answer_direct` (direct mode: no wire marked `tor`, no partition, no
+  onion name); `Nav.start_onion_direct` (a direct-mode `.onion` navigation fails);
+  `Sub.start_tor`, `Sub.answer_tor`, `Sub.start_direct`, `Sub.op_page_tor` for op `subresource`;
+  `onAnswer_page` (a `PageFetch` step keeps the transfer's page). None says that the host sends a
+  `tor` wire through Tor: host glue, tested, not proved.
