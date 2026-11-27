@@ -61,9 +61,11 @@ Proved (Lean theorems; axioms `propext`, `Quot.sound`, `Classical.choice`):
 Tested, not proved:
 
 - that signing and encoding succeed on valid input, and produce the right
-  bytes: the EIP-155 specification example; 12,877 distinct signed transactions
-  of the execution-specs Prague state tests (fields and published test key in,
-  `txbytes` out), 500 of them committed; EthereumJS as an oracle on random
+  bytes: the EIP-155 specification example; the 12,885 distinct signed
+  transactions of the execution-specs `tests@v21.0.3` Prague state tests
+  (fields and published test key in, `txbytes` out: 12,871 reproduced byte for
+  byte, the other 14 are transactions the fixtures mark invalid and the wallet
+  refuses to build), 500 of them committed; EthereumJS as an oracle on random
   transactions with fresh keys in CI;
 - RFC 6979 nonces and signatures: the bitcoinjs-lib fixture (7 signatures,
   30 nonce candidates including the 2nd and 16th of the sequence) and
