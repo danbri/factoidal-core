@@ -9,6 +9,7 @@ on:
       - 'formal/lean4/ethereum-consensus/PairingTarget.lean'
       - 'formal/lean4/ethereum-consensus/HashToField.lean'
       - 'formal/lean4/L4Factoidal/Crypto/SHA2.lean'
+      - 'formal/lean4/evm-cleanroom/scripts/check-witness-runtime.py'
       - '.github/workflows/ethereum-beacon.yml'
   workflow_dispatch:
 permissions:
@@ -160,15 +161,38 @@ jobs:
           ldd .lake/build/bin/beacon-spec-tests | tee "$RUNNER_TEMP/beacon-link.log"
           nm -u .lake/build/bin/beacon-spec-tests > "$RUNNER_TEMP/beacon-symbols.log"
           if grep -E ' (EVP_|EC_|BN_|SHA256|blst_|BLS_|mcl_|Hacl_|snappy_)' "$RUNNER_TEMP/beacon-symbols.log"; then exit 1; fi
+      - name: Inspect the exact vector runner ELF and bind its identity
+        run: |
+          set -euo pipefail
+          python3 scripts/check-beacon-native-boundary.py --binary .lake/build/bin/beacon-spec-tests --out "$RUNNER_TEMP/beacon-native-boundary.json"
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          root = pathlib.Path(os.environ["RUNNER_TEMP"])
+          report = json.loads((root / "beacon-native-boundary.json").read_text())
+          digest = report["sha256"]
+          if report["passed"] is not True or not re.fullmatch(r"[0-9a-f]{64}", digest):
+              raise SystemExit("native report did not establish executable identity")
+          binary = ".lake/build/bin/beacon-spec-tests"
+          (root / "beacon-runner-sha256.txt").write_text(f"{digest}  {binary}\n")
+          bad = ("1" if digest[0] == "0" else "0") + digest[1:]
+          (root / "beacon-runner-negative-sha256.txt").write_text(f"{bad}  {binary}\n")
+          PY
+          sha256sum --check --strict "$RUNNER_TEMP/beacon-runner-sha256.txt"
+          if sha256sum --check --strict "$RUNNER_TEMP/beacon-runner-negative-sha256.txt"; then
+            echo "wrong binary digest control escaped" >&2
+            exit 1
+          fi
       - name: Run the official vectors (signatures checked in every case that allows it)
         env:
           PRESET: ${{ matrix.preset }}
         run: |
           set -euo pipefail
           ulimit -c 0
+          sha256sum --check --strict "$RUNNER_TEMP/beacon-runner-sha256.txt"
           /usr/bin/time -v .lake/build/bin/beacon-spec-tests --vectors "$RUNNER_TEMP/vectors" --preset "$PRESET" \
             --json "$RUNNER_TEMP/beacon-$PRESET.json" 2> "$RUNNER_TEMP/beacon-$PRESET-time.log" \
             | tee "$RUNNER_TEMP/beacon-$PRESET.log"
+          sha256sum --check --strict "$RUNNER_TEMP/beacon-runner-sha256.txt"
           grep -E "Maximum resident|Elapsed|User time" "$RUNNER_TEMP/beacon-$PRESET-time.log" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Epoch processing at one million validators (scaling measurement)
         if: matrix.preset == 'mainnet'
@@ -176,8 +200,10 @@ jobs:
           set -euo pipefail
           STATE="$RUNNER_TEMP/vectors/tests/mainnet/fulu/epoch_processing/rewards_and_penalties/pyspec_tests/almost_full_attestations/pre.ssz_snappy"
           for N in 100000 1000000; do
+            sha256sum --check --strict "$RUNNER_TEMP/beacon-runner-sha256.txt"
             /usr/bin/time -v .lake/build/bin/beacon-spec-tests --preset mainnet --bench-epoch "$STATE" --validators "$N" \
               2> "$RUNNER_TEMP/beacon-bench-$N-time.log" | tee -a "$RUNNER_TEMP/beacon-bench.log"
+            sha256sum --check --strict "$RUNNER_TEMP/beacon-runner-sha256.txt"
             grep -E "Maximum resident|Elapsed" "$RUNNER_TEMP/beacon-bench-$N-time.log" | tee -a "$RUNNER_TEMP/beacon-bench.log"
           done
           { echo '### Epoch sub-steps on a grown registry'; echo '```'; cat "$RUNNER_TEMP/beacon-bench.log"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
