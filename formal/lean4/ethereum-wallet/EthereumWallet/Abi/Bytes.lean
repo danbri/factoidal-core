@@ -136,6 +136,55 @@ theorem beBytes_length (k n : Nat) : (beBytes k n).length = k := by
   | zero => rfl
   | succ k ih => rw [beBytes_succ]; simp [ih]
 
+theorem beAcc_split (j k n : Nat) (acc : List UInt8) :
+    beAcc (j + k) n acc = beAcc j (n / 256 ^ k) (beAcc k n acc) := by
+  induction k generalizing n acc with
+  | zero => simp [beAcc]
+  | succ k ih =>
+    rw [← Nat.add_assoc]
+    simp only [beAcc]
+    rw [ih, Nat.div_div_eq_div_mul, Nat.pow_succ, Nat.mul_comm 256 (256 ^ k)]
+
+theorem beAcc_mod (k n : Nat) (acc : List UInt8) :
+    beAcc k (n % 256 ^ k) acc = beAcc k n acc := by
+  induction k generalizing n acc with
+  | zero => simp [beAcc]
+  | succ k ih =>
+    simp only [beAcc]
+    have h1 : n % 256 ^ (k + 1) % 256 = n % 256 := by
+      rw [Nat.pow_succ]
+      exact Nat.mod_mul_left_mod n (256 ^ k) 256
+    have h2 : n % 256 ^ (k + 1) / 256 = n / 256 % 256 ^ k := by
+      rw [Nat.pow_succ, Nat.mul_comm]
+      exact Nat.mod_mul_right_div_self n 256 (256 ^ k)
+    rw [h1, h2, ih]
+
+theorem beAcc_zero (k : Nat) (acc : List UInt8) : beAcc k 0 acc = List.replicate k 0 ++ acc := by
+  induction k generalizing acc with
+  | zero => simp [beAcc]
+  | succ k ih =>
+    have hz : UInt8.ofNat 0 = 0 := rfl
+    simp only [beAcc, Nat.zero_div, Nat.zero_mod]
+    rw [ih, List.replicate_succ', hz]
+    simp
+
+/-- `2^64`: words are read and written as four 8-byte limbs, so that the arithmetic on a
+    typical word stays in machine integers. -/
+def two64 : Nat := 18446744073709551616
+
+theorem pow_256_8 : (256 : Nat) ^ 8 = two64 := by decide
+
+theorem beBytes32_limbs (n : Nat) :
+    beBytes 32 n
+      = beAcc 8 (n / 256 ^ 8 / 256 ^ 8 / 256 ^ 8)
+          (beAcc 8 (n / 256 ^ 8 / 256 ^ 8) (beAcc 8 (n / 256 ^ 8) (beAcc 8 n []))) := by
+  show beAcc (24 + 8) n [] = _
+  rw [beAcc_split]
+  show beAcc (16 + 8) _ _ = _
+  rw [beAcc_split]
+  show beAcc (8 + 8) _ _ = _
+  rw [beAcc_split]
+
 /-- The number written in the `k` bytes of `d` from `p`, most significant first.
     The recursion depth is `k`, and every caller passes at most 32. -/
 def beNat (d : ByteArray) (p : Nat) : Nat → Nat
@@ -160,10 +209,66 @@ theorem beNat_of_window (d : ByteArray) (p k n : Nat) (h : Window d p (beBytes k
     generalize n / 256 % 256 ^ k = x
     omega
 
-/-- A 32-byte ABI word. -/
-def word (n : Nat) : List UInt8 := beBytes 32 n
+theorem beNat_add (d : ByteArray) (p j k : Nat) :
+    beNat d p (j + k) = beNat d p j * 256 ^ k + beNat d (p + j) k := by
+  induction k with
+  | zero => simp [beNat]
+  | succ k ih =>
+    rw [← Nat.add_assoc]
+    simp only [beNat, ih]
+    rw [Nat.pow_succ, Nat.add_mul, Nat.mul_assoc, Nat.add_assoc, Nat.add_assoc p j k]
 
-theorem word_length (n : Nat) : (word n).length = 32 := beBytes_length 32 n
+/-- `hi * 2^64 + lo`, without touching big numbers when `hi` is zero. -/
+def horner (hi lo : Nat) : Nat := if hi = 0 then lo else hi * two64 + lo
+
+theorem horner_eq (hi lo : Nat) : horner hi lo = hi * 256 ^ 8 + lo := by
+  unfold horner
+  split
+  · rename_i h
+    rw [h, Nat.zero_mul, Nat.zero_add]
+  · rw [pow_256_8]
+
+/-- The 32-byte big-endian number at `p`, read as four 8-byte limbs. -/
+def wordAt (d : ByteArray) (p : Nat) : Nat :=
+  horner (horner (horner (beNat d p 8) (beNat d (p + 8) 8)) (beNat d (p + 16) 8))
+    (beNat d (p + 24) 8)
+
+/-- Kind: implementation equals specification. Says: the limb-wise read is the 32-byte
+    big-endian number.
+    Does not say: anything about speed. -/
+theorem wordAt_eq (d : ByteArray) (p : Nat) : wordAt d p = beNat d p 32 := by
+  have a : beNat d p 32 = beNat d p 24 * 256 ^ 8 + beNat d (p + 24) 8 := beNat_add d p 24 8
+  have b : beNat d p 24 = beNat d p 16 * 256 ^ 8 + beNat d (p + 16) 8 := beNat_add d p 16 8
+  have c : beNat d p 16 = beNat d p 8 * 256 ^ 8 + beNat d (p + 8) 8 := beNat_add d p 8 8
+  simp only [wordAt, horner_eq]
+  rw [a, b, c]
+
+/-- A 32-byte ABI word: the low 32 bytes of `n`, most significant first (`word_eq`). Written
+    as four 8-byte limbs; a number below `2^64` never touches big-number arithmetic. -/
+def word (n : Nat) : List UInt8 :=
+  if n < two64 then List.replicate 24 0 ++ beAcc 8 n []
+  else
+    beAcc 8 (n / two64 / two64 / two64)
+      (beAcc 8 (n / two64 / two64 % two64) (beAcc 8 (n / two64 % two64) (beAcc 8 (n % two64) [])))
+
+/-- Kind: implementation equals specification. Says: `word n` is the 32-byte big-endian form
+    of `n` (of `n mod 2^256`).
+    Does not say: anything about speed. -/
+theorem word_eq (n : Nat) : word n = beBytes 32 n := by
+  rw [beBytes32_limbs]
+  unfold word
+  split
+  · rename_i hlt
+    have h0 : n / 256 ^ 8 = 0 := by rw [pow_256_8]; exact Nat.div_eq_of_lt hlt
+    rw [h0]
+    simp only [Nat.zero_div, beAcc_zero]
+    simp
+  · rw [← pow_256_8]
+    simp only [beAcc_mod]
+
+theorem word_length (n : Nat) : (word n).length = 32 := by
+  rw [word_eq]
+  exact beBytes_length 32 n
 
 inductive Err where
   /-- A read would pass the end of the data. -/
@@ -188,7 +293,7 @@ inductive Err where
 
 /-- Read a word, refusing a read past the end. -/
 def readWord (d : ByteArray) (p : Nat) : Except Err Nat :=
-  if p + 32 ≤ d.size then .ok (beNat d p 32) else .error .outOfBounds
+  if p + 32 ≤ d.size then .ok (wordAt d p) else .error .outOfBounds
 
 /-- Kind: refusal at the bound. Says: a word read that would pass the end is refused.
     Does not say: what a successful read returns. -/
@@ -201,8 +306,9 @@ theorem readWord_of_window (d : ByteArray) (p n : Nat) (hn : n < two256)
     (h : Window d p (word n)) : readWord d p = .ok n := by
   have hs := h.size
   rw [word_length] at hs
+  rw [word_eq] at h
   simp only [readWord]
-  rw [if_pos hs, beNat_of_window d p 32 n h]
+  rw [if_pos hs, wordAt_eq, beNat_of_window d p 32 n h]
   have : (256 : Nat) ^ 32 = two256 := by decide
   rw [this, Nat.mod_eq_of_lt hn]
 

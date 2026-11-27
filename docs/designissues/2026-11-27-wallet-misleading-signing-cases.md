@@ -67,9 +67,14 @@ its canonical encoding is exactly the input bytes.
 ## Decisions, and what is open
 
 - Strict decoding re-encodes the decoded value and compares it with the
-  input. That doubles the work of a decode and is what makes the
-  canonical-form theorem a short proof. Proving that the single pass alone
-  accepts only canonical input would let the comparison go.
+  input. That adds a second pass to a decode and is what makes the
+  canonical-form theorem a short proof. The second pass uses a byte-array
+  encoder that is proved equal to the list specification (`encBA_eq`).
+  Proving that the single pass alone accepts only canonical input would let
+  the comparison go.
+- Decoded `bytes` and `string` values are lists of bytes, and single words
+  are still written through the list form; both are places to gain speed
+  later, each with an equality proof.
 - Refusing extra typed-data members is stricter than common wallets, which
   drop them silently. If real sites need it, the alternative is to ignore
   and flag them; they never reach the digest either way.

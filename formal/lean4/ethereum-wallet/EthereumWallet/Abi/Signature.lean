@@ -194,6 +194,18 @@ theorem parseSignature_ok (s : String) (f : FunctionSig) (h : parseSignature s =
 def encodeCall (f : FunctionSig) (args : List AbiValue) : List UInt8 :=
   f.selector ++ encodeArgs f.inputs args
 
+/-- Calldata as a byte array, from a selector computed earlier. -/
+def callBytesWith (selector : List UInt8) (f : FunctionSig) (args : List AbiValue) : ByteArray :=
+  toBytes selector ++ encodeArgsBytes f.inputs args
+
+/-- Kind: implementation equals specification. Says: the byte-array calldata built from a
+    function's own selector is the bytes of `encodeCall`.
+    Does not say: anything about a selector taken from elsewhere. -/
+theorem callBytesWith_eq (f : FunctionSig) (args : List AbiValue) :
+    ofBytes (callBytesWith f.selector f args) = encodeCall f args := by
+  simp only [callBytesWith, encodeCall]
+  rw [ofBytes_append, ofBytes_toBytes, encodeArgsBytes_eq]
+
 /-- Strict decoding of calldata against one known function. -/
 def decodeCall (f : FunctionSig) (d : ByteArray) : Except Err (List AbiValue) :=
   if windowB d 0 f.selector then decodeArgsAt f.inputs d 4 else .error .unknownSelector

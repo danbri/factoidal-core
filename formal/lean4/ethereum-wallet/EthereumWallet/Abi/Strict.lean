@@ -1,4 +1,4 @@
-import EthereumWallet.Abi.Proofs
+import EthereumWallet.Abi.Fast
 
 /-!
 # The strict argument decoder: what it accepts, and where it refuses
@@ -10,6 +10,33 @@ encoding of `vs`. The refusal theorems name the outcome at each bound.
 -/
 
 namespace EthereumWallet.Abi
+
+/-- Types accepted from outside: well formed and not nested beyond `maxTypeDepth`. -/
+def typesOk (ts : List AbiType) : Bool :=
+  wfL ts && decide (depthL ts ≤ maxTypeDepth)
+
+/-- Strict decoding of an argument list that occupies `d` from `base` to the end.
+
+    After the single pass, the value is checked against the types and
+    re-encoded (with the byte-array encoder, proved equal to the
+    specification), and the bytes must equal that encoding exactly. So the
+    only input accepted for a value is its canonical encoding
+    (`decodeArgsAt_sound`). -/
+def decodeArgsAt (ts : List AbiType) (d : ByteArray) (base : Nat) : Except Err (List AbiValue) :=
+  if typesOk ts then
+    match runFields d base (fieldDecs ts d) 0 (headSizeL ts) [] with
+    | .error e => .error e
+    | .ok r =>
+      if base + r.2 = d.size then
+        if checkL ts r.1 then
+          let e := encodeArgsBytes ts r.1
+          if base + e.size = d.size && windowBA d base e then .ok r.1 else .error .nonCanonical
+        else .error .nonCanonical
+      else .error .trailingBytes
+  else .error .badType
+
+def decodeArgs (ts : List AbiType) (d : ByteArray) : Except Err (List AbiValue) :=
+  decodeArgsAt ts d 0
 
 /-- Kind: soundness (canonical form). Says: when the strict decoder accepts, the types were
     accepted, the value is well typed, and the data from `base` to the end is exactly the
@@ -34,7 +61,11 @@ theorem decodeArgsAt_sound (ts : List AbiType) (d : ByteArray) (base : Nat) (vs 
           next hcan =>
             cases h
             simp only [Bool.and_eq_true, decide_eq_true_eq] at hcan
-            exact ⟨hty, hck, (windowB_iff _ _ _).mp hcan.2, hcan.1⟩
+            have hw := (windowBA_iff _ _ _).mp hcan.2
+            rw [encodeArgsBytes_eq] at hw
+            have hsz := hcan.1
+            rw [← ofBytes_length, encodeArgsBytes_eq] at hsz
+            exact ⟨hty, hck, hw, hsz⟩
           next => cases h
         next => cases h
       next => cases h
@@ -52,10 +83,13 @@ theorem decodeArgsAt_complete (ts : List AbiType) (d : ByteArray) (base : Nat) (
   have hwf : wfL ts = true := by
     simp only [typesOk, Bool.and_eq_true] at hty
     exact hty.1
-  have hwb := (windowB_iff d base (encodeArgs ts vs)).mpr hw
-  simp only [encodeArgs] at hl hw hsz hwb
+  have hwb : windowBA d base (encodeArgsBytes ts vs) = true :=
+    (windowBA_iff _ _ _).mpr (by rw [encodeArgsBytes_eq]; exact hw)
+  have hsz' : base + (encodeArgsBytes ts vs).size = d.size := by
+    rw [← ofBytes_length, encodeArgsBytes_eq]; exact hsz
+  simp only [encodeArgs] at hl hw hsz
   have hrun := runFields_tuple ts d vs base hwf hc hl hw
-  simp [decodeArgsAt, encodeArgs, hty, hrun, hsz, hc, hwb]
+  simp [decodeArgsAt, hty, hrun, hsz, hsz', hc, hwb]
 
 /-- Kind: round trip. Says: decode ∘ encode = id on well-typed argument lists of accepted types.
     Does not say: anything about ill-typed values, whose encoding is the empty list. -/

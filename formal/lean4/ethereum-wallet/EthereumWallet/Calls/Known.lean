@@ -19,24 +19,39 @@ namespace EthereumWallet.Calls
 
 open EthereumWallet.Abi
 
+/-- Calldata from a selector computed earlier. The builders below pass selector constants,
+    which are computed once, so that no hash runs per call. -/
+def callWith (selector : List UInt8) (f : FunctionSig) (args : List AbiValue) : List UInt8 :=
+  selector ++ encodeArgs f.inputs args
+
+/-- Kind: definition check. Says: calldata built from a function's own selector is `encodeCall`.
+    Does not say: anything about a selector taken from elsewhere. -/
+theorem callWith_eq (f : FunctionSig) (args : List AbiValue) :
+    callWith f.selector f args = encodeCall f args := rfl
+
 /-! ## ERC-20 -/
 
 def sigTransfer : FunctionSig := ⟨"transfer", [.address, .uint 256]⟩
+def selTransfer : List UInt8 := sigTransfer.selector
 def sigApprove : FunctionSig := ⟨"approve", [.address, .uint 256]⟩
+def selApprove : List UInt8 := sigApprove.selector
 def sigTransferFrom : FunctionSig := ⟨"transferFrom", [.address, .address, .uint 256]⟩
+def selTransferFrom : List UInt8 := sigTransferFrom.selector
 def sigBalanceOf : FunctionSig := ⟨"balanceOf", [.address]⟩
+def selBalanceOf : List UInt8 := sigBalanceOf.selector
 def sigAllowance : FunctionSig := ⟨"allowance", [.address, .address]⟩
+def selAllowance : List UInt8 := sigAllowance.selector
 
 def erc20Transfer (to amount : Nat) : List UInt8 :=
-  encodeCall sigTransfer [.address to, .uint amount]
+  callWith selTransfer sigTransfer [.address to, .uint amount]
 def erc20Approve (spender amount : Nat) : List UInt8 :=
-  encodeCall sigApprove [.address spender, .uint amount]
+  callWith selApprove sigApprove [.address spender, .uint amount]
 def erc20TransferFrom (src dst amount : Nat) : List UInt8 :=
-  encodeCall sigTransferFrom [.address src, .address dst, .uint amount]
+  callWith selTransferFrom sigTransferFrom [.address src, .address dst, .uint amount]
 def erc20BalanceOf (owner : Nat) : List UInt8 :=
-  encodeCall sigBalanceOf [.address owner]
+  callWith selBalanceOf sigBalanceOf [.address owner]
 def erc20Allowance (owner spender : Nat) : List UInt8 :=
-  encodeCall sigAllowance [.address owner, .address spender]
+  callWith selAllowance sigAllowance [.address owner, .address spender]
 
 /-- Return data that is one `uint256` (`balanceOf`, `allowance`). -/
 def decodeUintReturn (d : ByteArray) : Except Err Nat :=
@@ -71,23 +86,29 @@ def evApproval : EventSig :=
 /-! ## ERC-721 -/
 
 def sigSafeTransferFrom : FunctionSig := ⟨"safeTransferFrom", [.address, .address, .uint 256]⟩
+def selSafeTransferFrom : List UInt8 := sigSafeTransferFrom.selector
 def sigSafeTransferFromData : FunctionSig :=
   ⟨"safeTransferFrom", [.address, .address, .uint 256, .bytes]⟩
+def selSafeTransferFromData : List UInt8 := sigSafeTransferFromData.selector
 def sigSetApprovalForAll : FunctionSig := ⟨"setApprovalForAll", [.address, .bool]⟩
+def selSetApprovalForAll : List UInt8 := sigSetApprovalForAll.selector
 def sigOwnerOf : FunctionSig := ⟨"ownerOf", [.uint 256]⟩
+def selOwnerOf : List UInt8 := sigOwnerOf.selector
 def sigGetApproved : FunctionSig := ⟨"getApproved", [.uint 256]⟩
+def selGetApproved : List UInt8 := sigGetApproved.selector
 def sigIsApprovedForAll : FunctionSig := ⟨"isApprovedForAll", [.address, .address]⟩
+def selIsApprovedForAll : List UInt8 := sigIsApprovedForAll.selector
 
 def erc721TransferFrom (src dst tokenId : Nat) : List UInt8 :=
-  encodeCall sigTransferFrom [.address src, .address dst, .uint tokenId]
+  callWith selTransferFrom sigTransferFrom [.address src, .address dst, .uint tokenId]
 def erc721SafeTransferFrom (src dst tokenId : Nat) : List UInt8 :=
-  encodeCall sigSafeTransferFrom [.address src, .address dst, .uint tokenId]
+  callWith selSafeTransferFrom sigSafeTransferFrom [.address src, .address dst, .uint tokenId]
 def erc721Approve (to tokenId : Nat) : List UInt8 :=
-  encodeCall sigApprove [.address to, .uint tokenId]
+  callWith selApprove sigApprove [.address to, .uint tokenId]
 def erc721SetApprovalForAll (operator : Nat) (approved : Bool) : List UInt8 :=
-  encodeCall sigSetApprovalForAll [.address operator, .bool approved]
+  callWith selSetApprovalForAll sigSetApprovalForAll [.address operator, .bool approved]
 def erc721OwnerOf (tokenId : Nat) : List UInt8 :=
-  encodeCall sigOwnerOf [.uint tokenId]
+  callWith selOwnerOf sigOwnerOf [.uint tokenId]
 
 /-- ERC-721 `Transfer` has the same signature as ERC-20's but indexes the token id, so its
     logs have four topics and no data. -/
@@ -101,11 +122,13 @@ def evApprovalForAll : EventSig :=
 /-! ## WETH9 -/
 
 def sigDeposit : FunctionSig := ⟨"deposit", []⟩
+def selDeposit : List UInt8 := sigDeposit.selector
 def sigWithdraw : FunctionSig := ⟨"withdraw", [.uint 256]⟩
+def selWithdraw : List UInt8 := sigWithdraw.selector
 
 /-- Wrap: call with the ether to wrap as the transaction value. -/
-def wethDeposit : List UInt8 := encodeCall sigDeposit []
-def wethWithdraw (amount : Nat) : List UInt8 := encodeCall sigWithdraw [.uint amount]
+def wethDeposit : List UInt8 := callWith selDeposit sigDeposit []
+def wethWithdraw (amount : Nat) : List UInt8 := callWith selWithdraw sigWithdraw [.uint amount]
 
 def evDeposit : EventSig :=
   { name := "Deposit", params := [⟨"dst", .address, true⟩, ⟨"wad", .uint 256, false⟩] }
@@ -120,10 +143,15 @@ def swapParams : AbiType :=
   .tuple [.address, .address, .uint 24, .address, .uint 256, .uint 256, .uint 160]
 
 def sigExactInputSingle : FunctionSig := ⟨"exactInputSingle", [swapParams]⟩
+def selExactInputSingle : List UInt8 := sigExactInputSingle.selector
 def sigExactOutputSingle : FunctionSig := ⟨"exactOutputSingle", [swapParams]⟩
+def selExactOutputSingle : List UInt8 := sigExactOutputSingle.selector
 def sigMulticallDeadline : FunctionSig := ⟨"multicall", [.uint 256, .array .bytes]⟩
+def selMulticallDeadline : List UInt8 := sigMulticallDeadline.selector
 def sigUnwrapWETH9 : FunctionSig := ⟨"unwrapWETH9", [.uint 256, .address]⟩
+def selUnwrapWETH9 : List UInt8 := sigUnwrapWETH9.selector
 def sigRefundETH : FunctionSig := ⟨"refundETH", []⟩
+def selRefundETH : List UInt8 := sigRefundETH.selector
 
 /-- Sell exactly `amountIn` of `tokenIn`; revert unless at least `amountOutMinimum` of
     `tokenOut` comes out. -/
@@ -148,21 +176,23 @@ structure ExactOutputSingle where
   sqrtPriceLimitX96 : Nat := 0
 
 def exactInputSingle (s : ExactInputSingle) : List UInt8 :=
-  encodeCall sigExactInputSingle [.seq [.address s.tokenIn, .address s.tokenOut, .uint s.fee,
-    .address s.recipient, .uint s.amountIn, .uint s.amountOutMinimum, .uint s.sqrtPriceLimitX96]]
+  callWith selExactInputSingle sigExactInputSingle
+    [.seq [.address s.tokenIn, .address s.tokenOut, .uint s.fee, .address s.recipient,
+      .uint s.amountIn, .uint s.amountOutMinimum, .uint s.sqrtPriceLimitX96]]
 
 def exactOutputSingle (s : ExactOutputSingle) : List UInt8 :=
-  encodeCall sigExactOutputSingle [.seq [.address s.tokenIn, .address s.tokenOut, .uint s.fee,
-    .address s.recipient, .uint s.amountOut, .uint s.amountInMaximum, .uint s.sqrtPriceLimitX96]]
+  callWith selExactOutputSingle sigExactOutputSingle
+    [.seq [.address s.tokenIn, .address s.tokenOut, .uint s.fee, .address s.recipient,
+      .uint s.amountOut, .uint s.amountInMaximum, .uint s.sqrtPriceLimitX96]]
 
 def unwrapWETH9 (amountMinimum recipient : Nat) : List UInt8 :=
-  encodeCall sigUnwrapWETH9 [.uint amountMinimum, .address recipient]
+  callWith selUnwrapWETH9 sigUnwrapWETH9 [.uint amountMinimum, .address recipient]
 
-def refundETH : List UInt8 := encodeCall sigRefundETH []
+def refundETH : List UInt8 := callWith selRefundETH sigRefundETH []
 
 /-- Wrap router calls so that the whole transaction reverts after `deadline` (Unix seconds). -/
 def swapWithDeadline (deadline : Nat) (calls : List (List UInt8)) : List UInt8 :=
-  encodeCall sigMulticallDeadline [.uint deadline, .seq (calls.map .bytes)]
+  callWith selMulticallDeadline sigMulticallDeadline [.uint deadline, .seq (calls.map .bytes)]
 
 /-! ## Slippage -/
 

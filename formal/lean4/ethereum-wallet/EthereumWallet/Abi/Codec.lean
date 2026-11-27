@@ -184,30 +184,4 @@ end
 def encodeArgs (ts : List AbiType) (vs : List AbiValue) : List UInt8 :=
   encSeq (encL ts vs)
 
-/-- Types accepted from outside: well formed and not nested beyond `maxTypeDepth`. -/
-def typesOk (ts : List AbiType) : Bool :=
-  wfL ts && decide (depthL ts ≤ maxTypeDepth)
-
-/-- Strict decoding of an argument list that occupies `d` from `base` to the end.
-
-    After the single pass, the value is checked against the types and
-    re-encoded, and the bytes must equal that encoding exactly. So the only
-    input accepted for a value is its canonical encoding
-    (`decodeArgsAt_sound`), at about twice the cost of the pass alone. -/
-def decodeArgsAt (ts : List AbiType) (d : ByteArray) (base : Nat) : Except Err (List AbiValue) :=
-  if typesOk ts then
-    match runFields d base (fieldDecs ts d) 0 (headSizeL ts) [] with
-    | .error e => .error e
-    | .ok r =>
-      if base + r.2 = d.size then
-        if checkL ts r.1 then
-          let e := encodeArgs ts r.1
-          if base + e.length = d.size && windowB d base e then .ok r.1 else .error .nonCanonical
-        else .error .nonCanonical
-      else .error .trailingBytes
-  else .error .badType
-
-def decodeArgs (ts : List AbiType) (d : ByteArray) : Except Err (List AbiValue) :=
-  decodeArgsAt ts d 0
-
 end EthereumWallet.Abi

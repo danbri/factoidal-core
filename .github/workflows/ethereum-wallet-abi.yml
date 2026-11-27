@@ -54,13 +54,13 @@ jobs:
           test "$(cat lean-toolchain)" = "leanprover/lean4:v4.33.1"
           mkdir -p .lake/abi-evidence
           lake build EthereumWallet.AbiAxioms 2>&1 | tee .lake/abi-evidence/build.log
-      - name: Axiom audit (94 theorems; propext, Classical.choice, Quot.sound only)
+      - name: Axiom audit (every listed theorem; propext, Classical.choice, Quot.sound only)
         shell: bash
         run: |
           set -euo pipefail
           python3 scripts/check-abi-axioms.py .lake/abi-evidence/build.log --out .lake/abi-evidence/axioms.json \
             | tee .lake/abi-evidence/axioms-summary.json
-          python3 -c 'import json; x=json.load(open(".lake/abi-evidence/axioms-summary.json")); assert x["passed"] and x["expected"]>=94 and x["reported"]==x["expected"], x'
+          python3 -c 'import json; x=json.load(open(".lake/abi-evidence/axioms-summary.json")); assert x["passed"] and x["expected"]>=118 and x["reported"]==x["expected"], x'
       - name: Hygiene audit (no sorry, user axiom, native_decide, unsafe or implemented_by; partial def count may not rise)
         working-directory: .
         run: python3 tools/lean-hygiene-audit.py --build-log formal/lean4/ethereum-wallet/.lake/abi-evidence/build.log

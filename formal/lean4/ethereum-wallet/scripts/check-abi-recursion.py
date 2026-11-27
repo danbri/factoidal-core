@@ -27,6 +27,8 @@ BOUNDS = {
     "EthereumWallet_Abi_checkL": ARITY,
     "EthereumWallet_Abi_AbiType_enc": TYPE,
     "EthereumWallet_Abi_encL": ARITY,
+    "EthereumWallet_Abi_AbiType_encBA": TYPE,
+    "EthereumWallet_Abi_encLBA": ARITY,
     "EthereumWallet_Abi_AbiType_decodeAt": TYPE,
     "EthereumWallet_Abi_fieldDecs": ARITY,
     "EthereumWallet_Abi_parseTy": "tuple nesting, refused past maxTypeDepth (32)",

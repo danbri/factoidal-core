@@ -204,20 +204,29 @@ def runBench (iterations : Nat) : IO UInt32 := do
     let call := swapWithDeadline (1800000000 + i)
       [exactInputSingle { sampleSwap with amountIn := 1000000000000000000 + i }]
     return (toBytes call).size
+  let (encB, s0) ← timeIt iterations fun i => do
+    let call := callBytesWith selMulticallDeadline sigMulticallDeadline
+      [.uint (1800000000 + i), .seq [.bytes
+        (exactInputSingle { sampleSwap with amountIn := 1000000000000000000 + i })]]
+    return call.size
   let (dec, s2) ← timeIt iterations fun i => do
     let summary := describeCall me router (i % 2) .unknown swapBytes
     return summary.warnings.length + (match summary.action with | .multicall d _ => d % 7 | _ => 0)
   let (strict, s3) ← timeIt iterations fun _ => do
-    match decodeCall sigMulticallDeadline swapBytes with
-    | .ok vs => return vs.length
-    | .error _ => return 0
-  IO.println s!"\{\"case\":\"swap\",\"bytes\":{swapBytes.size},\"encode\":{stats enc},\"describe\":{stats dec},\"strictDecode\":{stats strict},\"sink\":{s1 + s2 + s3}}"
+    if windowB swapBytes 0 selMulticallDeadline then
+      match decodeArgsAt sigMulticallDeadline.inputs swapBytes 4 with
+      | .ok vs => return vs.length
+      | .error _ => return 0
+    else return 0
+  IO.println s!"\{\"case\":\"swap\",\"bytes\":{swapBytes.size},\"encode\":{stats enc},\"encodeBytes\":{stats encB},\"describe\":{stats dec},\"strictDecode\":{stats strict},\"sink\":{s0 + s1 + s2 + s3}}"
   -- Large nested input at four sizes: cost per byte should stay flat.
   let mut perByte : Array Nat := #[]
   for n in [250, 500, 1000, 2000] do
     let v := largeValue n
     let (encL, _) ← timeIt 5 fun _ => do
       return (toBytes (encodeArgs [largeType] [v])).size
+    let (encBA, _) ← timeIt 5 fun _ => do
+      return (encodeArgsBytes [largeType] [v]).size
     let data := toBytes (encodeArgs [largeType] [v])
     let (decL, ok) ← timeIt 5 fun _ => do
       match decodeArgs [largeType] data with
@@ -226,7 +235,7 @@ def runBench (iterations : Nat) : IO UInt32 := do
     let sorted := (decL.toList.mergeSort (fun a b => decide (a ≤ b))).toArray
     let p50 := percentile sorted 50
     perByte := perByte.push (p50 * 1000 / data.size)
-    IO.println s!"\{\"case\":\"large\",\"elements\":{n},\"bytes\":{data.size},\"encode\":{stats encL},\"strictDecode\":{stats decL},\"decode_ps_per_byte\":{p50 * 1000 / data.size},\"decoded\":{ok}}"
+    IO.println s!"\{\"case\":\"large\",\"elements\":{n},\"bytes\":{data.size},\"encode\":{stats encL},\"encodeBytes\":{stats encBA},\"strictDecode\":{stats decL},\"decode_ps_per_byte\":{p50 * 1000 / data.size},\"decoded\":{ok}}"
   let lo := perByte.foldl min (perByte[0]!)
   let hi := perByte.foldl max 0
   IO.println s!"\{\"case\":\"linearity\",\"decode_ps_per_byte\":{perByte.toList},\"ratio_max_over_min_x100\":{if lo == 0 then 0 else hi * 100 / lo}}"

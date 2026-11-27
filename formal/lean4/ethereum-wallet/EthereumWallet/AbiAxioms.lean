@@ -3,7 +3,7 @@ import EthereumWallet.AbiVectors
 /-!
 # Axiom reports for the ABI, typed-data and call theorems
 
-One `#print axioms` per theorem, read from the build log by CI. The names are also
+One axiom report per theorem, read from the build log by CI. The names are also
 listed in `scripts/theorems/abi.txt`. Only `propext`, `Classical.choice` and
 `Quot.sound` may appear.
 -/
@@ -21,7 +21,16 @@ listed in `scripts/theorems/abi.txt`. Only `propext`, `Classical.choice` and
 #print axioms EthereumWallet.Abi.beAcc_eq
 #print axioms EthereumWallet.Abi.beBytes_succ
 #print axioms EthereumWallet.Abi.beBytes_length
+#print axioms EthereumWallet.Abi.beAcc_split
+#print axioms EthereumWallet.Abi.beAcc_mod
+#print axioms EthereumWallet.Abi.beAcc_zero
+#print axioms EthereumWallet.Abi.pow_256_8
+#print axioms EthereumWallet.Abi.beBytes32_limbs
 #print axioms EthereumWallet.Abi.beNat_of_window
+#print axioms EthereumWallet.Abi.beNat_add
+#print axioms EthereumWallet.Abi.horner_eq
+#print axioms EthereumWallet.Abi.wordAt_eq
+#print axioms EthereumWallet.Abi.word_eq
 #print axioms EthereumWallet.Abi.word_length
 #print axioms EthereumWallet.Abi.readWord_out_of_bounds
 #print axioms EthereumWallet.Abi.readWord_of_window
@@ -30,6 +39,22 @@ listed in `scripts/theorems/abi.txt`. Only `propext`, `Classical.choice` and
 #print axioms EthereumWallet.Abi.allZero_of_window
 #print axioms EthereumWallet.Abi.topic0_eq
 #print axioms EthereumWallet.Abi.decodeEvent_too_many_topics
+#print axioms EthereumWallet.Abi.ofBytes_toBytes
+#print axioms EthereumWallet.Abi.ofBytes_append
+#print axioms EthereumWallet.Abi.ofBytes_length
+#print axioms EthereumWallet.Abi.ofBytes_empty
+#print axioms EthereumWallet.Abi.rd_eq_getElem
+#print axioms EthereumWallet.Abi.eqFrom_iff
+#print axioms EthereumWallet.Abi.windowBA_iff
+#print axioms EthereumWallet.Abi.asLists_cons
+#print axioms EthereumWallet.Abi.headTotalBA_fold
+#print axioms EthereumWallet.Abi.headTotalBA_eq
+#print axioms EthereumWallet.Abi.fold_stepBA
+#print axioms EthereumWallet.Abi.encSeqBA_eq
+#print axioms EthereumWallet.Abi.asLists_map
+#print axioms EthereumWallet.Abi.encBA_eq
+#print axioms EthereumWallet.Abi.encLBA_eq
+#print axioms EthereumWallet.Abi.encodeArgsBytes_eq
 #print axioms EthereumWallet.Abi.keccak256_length
 #print axioms EthereumWallet.Abi.headTotal_fold
 #print axioms EthereumWallet.Abi.headTotal_cons
@@ -65,6 +90,7 @@ listed in `scripts/theorems/abi.txt`. Only `propext`, `Classical.choice` and
 #print axioms EthereumWallet.Abi.selector_eq
 #print axioms EthereumWallet.Abi.selector_length
 #print axioms EthereumWallet.Abi.parseSignature_ok
+#print axioms EthereumWallet.Abi.callBytesWith_eq
 #print axioms EthereumWallet.Abi.decodeCall_encodeCall
 #print axioms EthereumWallet.Abi.decodeCall_sound
 #print axioms EthereumWallet.Abi.decodeArgsAt_sound
@@ -87,6 +113,7 @@ listed in `scripts/theorems/abi.txt`. Only `propext`, `Classical.choice` and
 #print axioms EthereumWallet.Calls.create2Address_eq
 #print axioms EthereumWallet.Calls.create2Preimage_length
 #print axioms EthereumWallet.Calls.create2Address_lt
+#print axioms EthereumWallet.Calls.callWith_eq
 #print axioms EthereumWallet.Calls.minOutForSlippage_le
 #print axioms EthereumWallet.Calls.minOutForSlippage_tight
 #print axioms EthereumWallet.Calls.le_maxInForSlippage
