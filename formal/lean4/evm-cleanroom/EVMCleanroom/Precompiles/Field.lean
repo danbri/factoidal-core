@@ -10,7 +10,12 @@ dictionary so the curve arithmetic in `Curve.lean` is written once.
 
 Nothing here is constant-time: the precompiles handle public data only.
 
-Proved here: results stay canonical (below the modulus). Field laws and
+All operations expect canonical arguments (below the modulus); the decoders
+of every precompile enforce that before any arithmetic. Addition, subtraction
+and negation then need no division.
+
+Proved here: results stay canonical (below the modulus), and the division-free
+operations agree with the residues on canonical values. Field laws and
 primality of the moduli are not proved; inverses and square roots are checked
 by the callers (`a * inv a = 1`, `sqrt a ^ 2 = a`) before use, and by guards.
 -/
@@ -32,10 +37,13 @@ structure FieldOps (F : Type) where
 
 namespace Fp
 
-@[inline] def add (p a b : Nat) : Nat := (a + b) % p
-@[inline] def sub (p a b : Nat) : Nat := (a + (p - b % p)) % p
+/-- Sum of two canonical values: one comparison and at most one subtraction, no division. -/
+@[inline] def add (p a b : Nat) : Nat := if a + b < p then a + b else a + b - p
+/-- Difference of two canonical values, without division. -/
+@[inline] def sub (p a b : Nat) : Nat := if b ≤ a then a - b else a + p - b
 @[inline] def mul (p a b : Nat) : Nat := (a * b) % p
-@[inline] def neg (p a : Nat) : Nat := (p - a % p) % p
+/-- Negation of a canonical value. -/
+@[inline] def neg (p a : Nat) : Nat := if a = 0 then 0 else p - a
 
 /-- Extended Euclid on `(p, a)`; the Bézout coefficient of `a` is tracked as an
     integer. Returns 0 when `a` has no inverse or the fuel runs out. -/
@@ -64,10 +72,41 @@ def sqrt? (p a : Nat) : Option Nat :=
   let root := pow p a ((p + 1) / 4)
   if root * root % p == a % p then some root else none
 
-theorem add_lt (p a b : Nat) (h : 0 < p) : add p a b < p := Nat.mod_lt _ h
-theorem sub_lt (p a b : Nat) (h : 0 < p) : sub p a b < p := Nat.mod_lt _ h
+/-- Kind: canonical representation.
+    Says: sums, differences and negations of values below the modulus stay below it;
+    products do for any inputs.
+    Does not say: anything for non-canonical inputs of `add`, `sub` and `neg`. -/
+theorem add_lt (p a b : Nat) (ha : a < p) (hb : b < p) : add p a b < p := by
+  unfold add; split <;> omega
+theorem sub_lt (p a b : Nat) (ha : a < p) (hb : b < p) : sub p a b < p := by
+  unfold sub; split <;> omega
 theorem mul_lt (p a b : Nat) (h : 0 < p) : mul p a b < p := Nat.mod_lt _ h
-theorem neg_lt (p a : Nat) (h : 0 < p) : neg p a < p := Nat.mod_lt _ h
+theorem neg_lt (p a : Nat) (ha : a < p) : neg p a < p := by
+  unfold neg; split <;> omega
+
+/-- Kind: algebraic fact.
+    Says: on canonical values the division-free sum, difference and negation are the
+    residues of the integer sum, difference and negation.
+    Does not say: the modulus is prime. -/
+theorem add_eq_mod (p a b : Nat) (ha : a < p) (hb : b < p) : add p a b = (a + b) % p := by
+  unfold add
+  split
+  · rename_i h; exact (Nat.mod_eq_of_lt h).symm
+  · rename_i h
+    have h1 : a + b - p < p := by omega
+    have h2 : a + b = (a + b - p) + p := by omega
+    rw [h2, Nat.add_mod_right, Nat.mod_eq_of_lt h1]
+    omega
+
+theorem sub_eq_mod (p a b : Nat) (ha : a < p) (hb : b < p) : sub p a b = (a + (p - b)) % p := by
+  unfold sub
+  split
+  · rename_i h
+    have h1 : a + (p - b) = (a - b) + p := by omega
+    rw [h1, Nat.add_mod_right, Nat.mod_eq_of_lt (by omega)]
+  · rename_i h
+    have h1 : a + (p - b) = a + p - b := by omega
+    rw [h1, Nat.mod_eq_of_lt (by omega)]
 
 /-- Kind: canonical representation.
     Says: the inverse routine returns a value below the modulus.
@@ -83,10 +122,8 @@ theorem inv_lt (p a : Nat) (h : 0 < p) : inv p a < p := by
     Says: subtraction then addition of the same canonical value is the identity.
     Does not say: the modulus is prime. -/
 theorem add_sub_cancel (p a b : Nat) (ha : a < p) (hb : b < p) : add p (sub p a b) b = a := by
-  simp only [add, sub, Nat.mod_eq_of_lt hb]
-  rw [Nat.mod_add_mod]
-  have : a + (p - b) + b = a + p := by omega
-  rw [this, Nat.add_mod_right, Nat.mod_eq_of_lt ha]
+  unfold add sub
+  split <;> split <;> omega
 
 /-- Kind: algebraic fact.
     Says: multiplication commutes.
@@ -99,15 +136,11 @@ theorem mul_comm (p a b : Nat) : mul p a b = mul p b a := by simp [mul, Nat.mul_
 theorem add_comm (p a b : Nat) : add p a b = add p b a := by simp [add, Nat.add_comm]
 
 /-- Kind: algebraic fact.
-    Says: a value plus its negation is zero.
+    Says: a canonical value plus its negation is zero.
     Does not say: the modulus is prime. -/
-theorem add_neg (p a : Nat) (h : 0 < p) : add p a (neg p a) = 0 := by
-  simp only [add, neg]
-  rw [Nat.add_mod_mod]
-  have hlt := Nat.mod_lt a h
-  have hd : a = p * (a / p) + a % p := (Nat.div_add_mod a p).symm
-  have : a + (p - a % p) = p * (a / p + 1) := by rw [Nat.mul_add, Nat.mul_one]; omega
-  rw [this, Nat.mul_mod_right]
+theorem add_neg (p a : Nat) (ha : a < p) : add p a (neg p a) = 0 := by
+  unfold add neg
+  split <;> split <;> omega
 
 def ops (p : Nat) : FieldOps Nat where
   zero := 0
@@ -141,17 +174,17 @@ def one : Fp2 := ⟨1, 0⟩
 
 /-- `(a0 + a1 u)(b0 + b1 u) = (a0 b0 − a1 b1) + (a0 b1 + a1 b0) u`, one reduction per coordinate. -/
 @[inline] def mul (p : Nat) (a b : Fp2) : Fp2 :=
-  ⟨(a.c0 * b.c0 + (p - a.c1 % p) * b.c1) % p, (a.c0 * b.c1 + a.c1 * b.c0) % p⟩
+  ⟨(a.c0 * b.c0 + (p - a.c1) * b.c1) % p, (a.c0 * b.c1 + a.c1 * b.c0) % p⟩
 
 @[inline] def sqr (p : Nat) (a : Fp2) : Fp2 :=
-  ⟨((a.c0 + a.c1) * (a.c0 + (p - a.c1 % p))) % p, (2 * a.c0 * a.c1) % p⟩
+  ⟨((a.c0 + a.c1) * (a.c0 + (p - a.c1))) % p, (2 * a.c0 * a.c1) % p⟩
 
 @[inline] def scale (p : Nat) (k : Nat) (a : Fp2) : Fp2 := ⟨(k * a.c0) % p, (k * a.c1) % p⟩
 
 /-- Inverse through the norm `a0² + a1²`; zero maps to zero. -/
 def inv (p : Nat) (a : Fp2) : Fp2 :=
   let n := Fp.inv p ((a.c0 * a.c0 + a.c1 * a.c1) % p)
-  ⟨(a.c0 * n) % p, ((p - a.c1 % p) * n) % p⟩
+  ⟨(a.c0 * n) % p, ((p - a.c1) * n) % p⟩
 
 @[inline] def isZero (a : Fp2) : Bool := a.c0 == 0 && a.c1 == 0
 
@@ -169,11 +202,13 @@ def pow (p : Nat) (base : Fp2) (e : Nat) : Fp2 := powLoop p base e (Nat.log2 e +
 theorem mul_canonical (p : Nat) (a b : Fp2) (h : 0 < p) : (mul p a b).c0 < p ∧ (mul p a b).c1 < p :=
   ⟨Nat.mod_lt _ h, Nat.mod_lt _ h⟩
 
-theorem add_canonical (p : Nat) (a b : Fp2) (h : 0 < p) : (add p a b).c0 < p ∧ (add p a b).c1 < p :=
-  ⟨Nat.mod_lt _ h, Nat.mod_lt _ h⟩
+theorem add_canonical (p : Nat) (a b : Fp2) (ha : a.c0 < p ∧ a.c1 < p) (hb : b.c0 < p ∧ b.c1 < p) :
+    (add p a b).c0 < p ∧ (add p a b).c1 < p :=
+  ⟨Fp.add_lt _ _ _ ha.1 hb.1, Fp.add_lt _ _ _ ha.2 hb.2⟩
 
-theorem sub_canonical (p : Nat) (a b : Fp2) (h : 0 < p) : (sub p a b).c0 < p ∧ (sub p a b).c1 < p :=
-  ⟨Nat.mod_lt _ h, Nat.mod_lt _ h⟩
+theorem sub_canonical (p : Nat) (a b : Fp2) (ha : a.c0 < p ∧ a.c1 < p) (hb : b.c0 < p ∧ b.c1 < p) :
+    (sub p a b).c0 < p ∧ (sub p a b).c1 < p :=
+  ⟨Fp.sub_lt _ _ _ ha.1 hb.1, Fp.sub_lt _ _ _ ha.2 hb.2⟩
 
 theorem inv_canonical (p : Nat) (a : Fp2) (h : 0 < p) : (inv p a).c0 < p ∧ (inv p a).c1 < p :=
   ⟨Nat.mod_lt _ h, Nat.mod_lt _ h⟩
@@ -209,6 +244,8 @@ private def p13 : Nat := 13
 #guard Fp2.pow 19 ⟨3, 7⟩ 360 == Fp2.one
 
 #print axioms Fp.inv_lt
+#print axioms Fp.add_eq_mod
+#print axioms Fp.sub_eq_mod
 #print axioms Fp.add_sub_cancel
 #print axioms Fp.mul_comm
 #print axioms Fp.add_comm

@@ -66,7 +66,7 @@ def liftX (x parity : Nat) : Option (Nat × Nat) :=
   match Fp.sqrt? p ((x * x % p * x + 7) % p) with
   | none => none
   | some root =>
-    let y := if root % 2 = parity then root else p - root
+    let y := if root % 2 = parity then root else Fp.neg p root
     if onCurve x y then some (x, y) else none
 
 /-- The public key `(x, y)` for message hash `z`, parity bit and signature `(r, s)`:
@@ -111,9 +111,9 @@ theorem liftX_onCurve (x parity : Nat) (point : Nat × Nat) (h : liftX x parity 
   split at h
   · cases h
   · rename_i root _
-    have h' : (if onCurve x (if root % 2 = parity then root else p - root) = true then
-        some (x, if root % 2 = parity then root else p - root) else none) = some point := h
-    by_cases hCurve : onCurve x (if root % 2 = parity then root else p - root) = true
+    have h' : (if onCurve x (if root % 2 = parity then root else Fp.neg p root) = true then
+        some (x, if root % 2 = parity then root else Fp.neg p root) else none) = some point := h
+    by_cases hCurve : onCurve x (if root % 2 = parity then root else Fp.neg p root) = true
     · rw [if_pos hCurve] at h'
       cases h'
       exact ⟨hCurve, rfl⟩

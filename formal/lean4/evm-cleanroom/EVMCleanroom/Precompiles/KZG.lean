@@ -68,7 +68,7 @@ def decompressG1 (data : ByteArray) (off : Nat) : Option (Option (Nat × Nat)) :
     match Fp.sqrt? p ((x * x % p * x + 4) % p) with
     | none => none
     | some root =>
-      let y := if decide (root > (p - 1) / 2) == larger then root else p - root
+      let y := if decide (root > (p - 1) / 2) == larger then root else Fp.neg p root
       if BLS12381.inSubgroup1 x y then some (some (x, y)) else none
 
 /-- Is `a` the larger of `a` and `−a` in the order used for compressed `G2` points
