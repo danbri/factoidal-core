@@ -4668,15 +4668,11 @@ def packAnswer (head : String) (sections : Array ByteArray) : ByteArray := Id.ru
     for _ in [0:pad s.size] do out := out.push 0
   return out
 
-/-- A render answer with no Base64 (issue 1268): the JSON head, and the storage floats
-and tile words as raw sections (`packAnswer`). The head is the `compile` answer with
-`"dataSection":k` in place of `"dataBase64"` and `"tilesSection":k+1` in place of
-`"tiles"`; other answers have no section. -/
 /-! ### Web Audio: the engine's IO layer (plan 13.2 and 13.3, issue 1169) -/
 
 /-- The page hosts of the held sessions on both engines, changed by `f` (a session with no real-time
 context is not touched: `f` answers `none`). -/
-def audioHosts (held : WebScripts.Held) (f : Nat → Page.Host → BaseIO (Option Page.Host)) :
+def audioHosts (held : WebScripts.Held) (f : Nat → WasmVM.Hosts.Page.Host → BaseIO (Option WasmVM.Hosts.Page.Host)) :
     BaseIO WebScripts.Held := do
   let mut held := held
   if let some (id, s, m) := held.leanSession then
@@ -4741,6 +4737,10 @@ def audioAround {α : Type} (e : Engine) (j : JSON.Json) (k : Engine → JSON.Js
   let (tasks, scripts) ← audioAfter e.audioTasks e.scripts
   return ({ e with audioTasks := tasks, scripts }, r)
 
+/-- A render answer with no Base64 (issue 1268): the JSON head, and the storage floats
+and tile words as raw sections (`packAnswer`). The head is the `compile` answer with
+`"dataSection":k` in place of `"dataBase64"` and `"tilesSection":k+1` in place of
+`"tiles"`; other answers have no section. -/
 @[export web_document_compile_bin]
 def compileBin (e : Engine) (html request : String) (width height : UInt32) : BaseIO (Engine × ByteArray) := do
   match parseRequest request with
