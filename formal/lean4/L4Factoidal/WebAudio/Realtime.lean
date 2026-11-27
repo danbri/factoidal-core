@@ -226,7 +226,11 @@ def serveWith (sh : Shared) (p : Params) (on : Bool) (sink : Sink.Sink) (c0 : Co
     let (l1, changes, confirmed) ← applyBatch p sink on l msgs
     l := l1
     let stop ← sh.stopping.modifyGet fun b => (b, b)
-    if stop && l.state != .closed then l := { l with state := .closed }
+    if stop && l.state != .closed then
+      l := { l with state := .closed }
+      trace on [("type", "\"native-audio-stop\""), ("ctx", num p.id), ("why", "\"engine stopped the task: page session gone\"")]
+    if changes.contains .closed then
+      trace on [("type", "\"native-audio-stop\""), ("ctx", num p.id), ("why", "\"close() message\"")]
     if l.state == .closed then
       publish sh sink l p #[] (if changes.contains .closed then changes else changes.push .closed) confirmed
       break
@@ -330,9 +334,15 @@ the tasks that ended. `nowMs` is the page clock (for `getOutputTimestamp().perfo
 def before (tasks : Tasks) (sid : Nat) (audio : Api.State) (nowMs : Nat) : BaseIO (Tasks × Api.State) := do
   let mut audio := audio
   let mut tasks := tasks
+  let on ← traceOn
   for ((s, ctx), h) in tasks.toList do
     if s != sid then continue
     let r ← takeReport h
+    let evs := r.ended.size + r.stateChanges.size + r.confirmed.size + r.rejected.size
+    if evs > 0 then
+      trace on [("type", "\"native-audio-report\""), ("session", num sid), ("ctx", num ctx), ("events", num evs),
+                ("ended", num r.ended.size), ("stateChanges", num r.stateChanges.size), ("confirmed", num r.confirmed.size),
+                ("known", toString (audio.realtime.contains ctx))]
     audio := Api.applyReport audio ctx { r with timeMs := nowMs.toFloat }
     if ← hasEnded h then tasks := tasks.erase (s, ctx)
   return (tasks, audio)
@@ -342,7 +352,10 @@ context whose first message is 190 gets a new task. -/
 def after (tasks : Tasks) (sid : Nat) (spec : String) (audio : Api.State) : BaseIO (Tasks × Api.State) := do
   let (audio, boxes) := Api.takeOutbox audio
   let mut tasks := tasks
+  let on ← traceOn
   for (ctx, msgs) in boxes do
+    trace on [("type", "\"native-audio-give\""), ("session", num sid), ("ctx", num ctx), ("messages", num msgs.size),
+              ("task", toString (tasks.contains (sid, ctx)))]
     match tasks[(sid, ctx)]? with
     | some h => give h msgs
     | none =>
@@ -358,9 +371,11 @@ def after (tasks : Tasks) (sid : Nat) (spec : String) (audio : Api.State) : Base
 
 /-- Stop every task of the sessions that are not in `live` (the page session ended). -/
 def stopGone (tasks : Tasks) (live : List Nat) : BaseIO Tasks := do
+  let on ← traceOn
   let mut tasks := tasks
   for ((s, ctx), h) in tasks.toList do
     if !live.contains s then
+      trace on [("type", "\"native-audio-gone\""), ("session", num s), ("ctx", num ctx), ("live", toString live)]
       stop h
       tasks := tasks.erase (s, ctx)
   return tasks
