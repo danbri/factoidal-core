@@ -15,8 +15,10 @@ def readInput (root key : String) (proof : List String) :
 def run (args : List String) : IO UInt32 := do
   match args with
   | "--dangerously-enable-unverified-keccak" :: root :: key :: proof =>
-    if proof.length > MPTPathStore.maxStoreNodes ||
-        proof.any (fun s => s.length > 2*MPT.maxNodeBytes) then
+    -- Permit exactly one over-limit node/count in this test probe so the
+    -- Lean store admission/extension guards, not just transport, are exercised.
+    if proof.length > MPTPathStore.maxStoreNodes + 1 ||
+        proof.any (fun s => s.length > 2*(MPT.maxNodeBytes+1)) then
       IO.println "resourceLimit"
       return 0
     if root.length != 64 || key.length != 64 then
