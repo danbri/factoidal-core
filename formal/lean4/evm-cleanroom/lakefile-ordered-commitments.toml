@@ -1,0 +1,11 @@
+name = "evm_cleanroom"
+version = "0.1.0"
+defaultTargets = ["evm-ordered-commitment-test"]
+moreLeancArgs = ["-Dlean_initialize=lean_initialize_runtime_module"]
+
+[[lean_lib]]
+name = "EVMCleanroom"
+
+[[lean_exe]]
+name = "evm-ordered-commitment-test"
+root = "EVMCleanroom.OrderedCommitmentTestCLI"
