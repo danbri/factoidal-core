@@ -192,4 +192,31 @@ def noIntl : Except String (List String) := do
 
 #guard noIntl == .ok ["undefined"]
 
+/-! The document loader uses import maps before it calls the network policy. -/
+
+private def importMapPage := "https://example.test/index.html"
+private def importMapDocument :=
+  "<!doctype html><base href='./diddums/'>" ++
+  "<script type='importmap'>{\"imports\":{\"@factoidal/core\":\"./vendor/browser.mjs\"," ++
+  "\"./studio.js\":\"./studio.js?v=1\"}}</script>" ++
+  "<script type='module'>import '@factoidal/core'; import './studio.js';</script>"
+
+private def firstModuleWire (html : String) : Option String :=
+  match (LeanJSModules.load (DOM.parseHtmlDocument html) importMapPage
+      (Page.ofUrl importMapPage) #[]).1 with
+  | .error wire => some wire.url
+  | .ok _ => none
+
+#guard firstModuleWire importMapDocument == some "https://example.test/diddums/vendor/browser.mjs"
+#guard firstModuleWire ("<!doctype html><base href='./diddums/'>" ++
+  "<script type='importmap'>{\"imports\":{\"./studio.js\":\"./studio.js?v=1\"}}</script>" ++
+  "<script type='module'>import './studio.js';</script>") ==
+  some "https://example.test/diddums/studio.js?v=1"
+
+-- CSP can refuse the inline map. In that case the bare import never reaches the network.
+#guard match (LeanJSModules.load (DOM.parseHtmlDocument importMapDocument) importMapPage
+    (Page.ofUrl importMapPage) #[] #[] "script-src 'self'").1 with
+  | .ok loaded => !loaded.importMapViolations.isEmpty
+  | .error _ => false
+
 end L4Factoidal.WasmVM.Tests.LeanJSNet

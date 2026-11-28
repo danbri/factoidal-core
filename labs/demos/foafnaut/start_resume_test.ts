@@ -49,3 +49,53 @@ Deno.test({name:"a start goes on from the script that waited: one run's logs, li
   console.log(`8 sync scripts: ${a.ms.toFixed(0)} ms (${a.answers} answers); 32: ${b.ms.toFixed(0)} ms (${b.answers} answers); x${(b.ms/a.ms).toFixed(1)}`);
   assert.ok(b.ms<8*a.ms,`32 sync scripts took ${(b.ms/a.ms).toFixed(1)} times as long as 8`);
 }});
+
+const importMapHtml = `<!doctype html><base href="./app/">
+<script type="importmap">{"imports":{"@factoidal/core":"./vendor/browser.mjs","./studio.js":"./studio.js?v=1"}}</script>
+<script type="module" src="./entry.mjs?v=1"></script>`;
+
+const moduleBodies = new Map([
+  ["/app/entry.mjs?v=1", `import {rdf} from "@factoidal/core"; import {studio} from "./studio.js"; console.log(rdf + " " + studio);`],
+  ["/app/vendor/browser.mjs", `export const rdf = "RDF";`],
+  ["/app/studio.js?v=1", `export const studio = "studio";`],
+]);
+
+async function runImportMap(nativeEngine?: string) {
+  const engine = await loadHTML(nativeEngine);
+  const fetched: string[] = [];
+  let turn = engine.scriptSession(importMapHtml, {
+    action: "start", url: "https://example.test/index.html", resources: [],
+    engine: "bubblepop", network: true, pageAddress: "93.184.216.34",
+  }) as Turn;
+  try {
+    for (let step = 0; turn.netSync && step < 12; step++) {
+      const wire = turn.netSync;
+      let answer;
+      if (wire.resolve) {
+        answer = { id: wire.id, addresses: ["93.184.216.34"] };
+      } else {
+        const url = new URL(wire.url);
+        assert.equal(url.origin, "https://example.test");
+        const path = url.pathname + url.search;
+        const body = moduleBodies.get(path);
+        assert.notEqual(body, undefined, `unexpected module ${path}`);
+        fetched.push(path);
+        answer = { id: wire.id, status: 200, headers: [["content-type", "text/javascript"]], bodyBase64: b64(body!) };
+      }
+      turn = engine.scriptSession("", { action: "syncAnswer", session: turn.session, answer }) as Turn;
+    }
+    assert.equal(turn.netSync, undefined, "the module graph finished loading");
+    assert.deepEqual(turn.errors, []);
+    assert.deepEqual(fetched, [...moduleBodies.keys()]);
+    assert.deepEqual(turn.logs.map(line => line.replace(/^\u0001\w+\u0001/, "")), ["RDF studio"]);
+  } finally {
+    engine.scriptSession("", { action: "close" });
+  }
+}
+
+Deno.test("document import maps resolve bare and versioned imports in Wasm", () => runImportMap());
+Deno.test({
+  name: "document import maps resolve bare and versioned imports in the native engine",
+  ignore: !exists(library),
+  fn: () => runImportMap(library),
+});

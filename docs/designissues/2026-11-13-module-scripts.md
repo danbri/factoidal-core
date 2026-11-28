@@ -14,6 +14,8 @@ WasmVM does not run module scripts yet (see "Open").
   cycles, a module evaluated once per document, an evaluation error kept and given again to
   later importers.
 - `import.meta.url`.
+- Inline document import maps, including exact keys, package prefixes, referrer scopes and
+  integrity metadata. See the [implementation record](../20261128-foafnaut-import-maps.md).
 - A classic script with `nomodule` is not run.
 - External module scripts fire `load` after they run; a failed fetch anywhere in the graph
   fires `error` at the element; a parse error or a bare specifier is reported at the window
@@ -29,7 +31,7 @@ WasmVM does not run module scripts yet (see "Open").
 | Which elements are module scripts; document base URL | `WasmVM/Hosts/LeanJSModules.lean`, `scriptsOf`, `baseOf` |
 | Fetch mode (CORS), credentials, redirects, address policy | `Net.PageFetch.Transfer` (shared with `fetch` and XHR) through `LeanJSModules.fetchModule` |
 | Status and MIME type check, UTF-8 decode | `LeanJSModules.moduleText` |
-| Specifier resolution, module map (per document, keyed by request URL) | `LeanJSModules.resolveSpecifier`, `visit` |
+| Specifier resolution and the module cache | `ImportMap.resolve` and `LeanJSModules.visit` |
 | What a script does: run, `error`, report | `LeanJSModules.outcome`, `LeanJS.Session.runModule` |
 
 The hosts are not changed: a module fetch is a `netSync` request, the same wire a sync
@@ -94,7 +96,7 @@ Assumed: the host makes the request it is told and reports the response faithful
 - Top-level `await` is not supported (a SyntaxError).
 - Dynamic `import()` parses (in classic and module code) but is not implemented: calling it is
   a ReferenceError.
-- Import maps are not supported: a bare specifier is a TypeError.
+- Maps registered by DOM mutation are later work. Workers use URL-only resolution.
 - JSON and CSS modules (`with { type: ... }`) are a SyntaxError.
 - Module workers, module scripts in frames, `modulepreload`: not supported.
 - Namespace object properties are accessors, where ECMA-262 has data properties; namespace keys

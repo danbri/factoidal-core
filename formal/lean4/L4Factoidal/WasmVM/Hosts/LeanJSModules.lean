@@ -15,8 +15,8 @@ makes the requests it is told to make:
   JavaScript MIME type (`isJavaScriptMime`); its body is decoded as UTF-8 (BOM sniffed).
 * The module map is per document: a URL is fetched once, and a module that two scripts import
   is one module. Its key is the request URL; the module's base URL is the response URL.
-* A module specifier is a URL (`/`, `./`, `../` relative to the module, or absolute). A bare
-  specifier is a TypeError: import maps are not supported.
+* Module specifiers are resolved by the inline import maps registered by the document, then
+  as URLs. The mapped URL passes through the same Fetch checks as any other module URL.
 * Fetching uses the sync answers of a start (`netSync`): the requests are made one at a time
   in a fixed order, and the start is made again with each answer; no script runs until the
   whole graph is there, so nothing runs twice.
@@ -30,6 +30,8 @@ import L4Factoidal.JS.Modules
 import L4Factoidal.Net.Xhr
 import L4Factoidal.WHATWG.Encoding.Core
 import L4Factoidal.DOM.Arena
+import L4Factoidal.HTML.CspSource
+import L4Factoidal.WasmVM.Hosts.ImportMap
 
 namespace L4Factoidal.WasmVM.Hosts.LeanJSModules
 open L4Factoidal
@@ -56,11 +58,9 @@ def moduleText (r : Response) : Except String String :=
                  else .error s!"MIME type {Net.Xhr.mimeEssence ct} is not JavaScript"
     | none => .error "no MIME type"
 
-/-- A module specifier resolved against a base URL (HTML §8.1.5.2, with no import map). -/
+/-- URL-only resolution for a host without a document import map (such as a worker). -/
 def resolveSpecifier (spec base : String) : Option String :=
-  if spec.startsWith "/" || spec.startsWith "./" || spec.startsWith "../" then
-    (WHATWG.URL.parseUrl spec (some base)).map (·.serialize)
-  else (WHATWG.URL.parseUrl spec none).map (·.serialize)
+  (ImportMap.urlLike spec base).map (·.serialize)
 
 /-- What a URL of the module map holds. -/
 inductive Entry where
@@ -96,6 +96,7 @@ in attempts, n² in the number of modules). -/
 structure Fetched where
   url : String
   credentials : Bool
+  integrity : String
   usedBefore : Nat
   usedAfter : Nat
   result : Except String (Except String JS.ModNode)
@@ -112,6 +113,7 @@ structure Loader where
   graph : JS.ModGraph := #[]
   /-- The requests of each module of the graph, by graph index. -/
   kids : Array (Array (String × Child)) := #[]
+  importMap : Option ImportMap.Map := none
   /-- The modules fetched and parsed, by this attempt and the attempts before (`Fetched`). -/
   memo : Array Fetched := #[]
   deriving Inhabited
@@ -134,12 +136,35 @@ check of `crossorigin="use-credentials"`). -/
 def moduleTransfer (p : Page) (url : String) (credentials : Bool) : Transfer :=
   { id := 0, page := p, method := "GET", url, headers := [("Accept", "*/*")], body := none, credentials }
 
+/-- Integrity is keyed by the request URL. The earliest map wins. -/
+def integrityOf (l : Loader) (url : String) : String :=
+  match l.importMap with
+  | none => ""
+  | some rules => ((rules.integrity.find? (·.1 == url)).map (·.2)).getD ""
+
+/-- Validate the response bytes before decoding or parsing them as a module. -/
+def checkedModuleText (r : Response) (integrity : String) : Except String String :=
+  if integrity.isEmpty || Net.Integrity.okFor integrity r.tainting r.body then moduleText r
+  else .error "module integrity mismatch"
+
+/-- Kind: refusal. Says: a response that fails the integrity check cannot be decoded
+as a module. Does not say: which digest algorithms the underlying check supports. -/
+theorem checkedModuleText_refuses (r : Response) (integrity : String)
+    (metadata : integrity.isEmpty = false)
+    (h : Net.Integrity.okFor integrity r.tainting r.body = false) :
+    checkedModuleText r integrity = .error "module integrity mismatch" := by
+  simp [checkedModuleText, metadata, h]
+
+/-- Kind: equivalence. Says: an empty integrity string takes the existing response path.
+Does not say: whether the response has the status and MIME type of a module. -/
+theorem checkedModuleText_empty (r : Response) : checkedModuleText r "" = moduleText r := rfl
+
 /-- Fetch `url` as a module: its response URL and text, why it failed, or `none` (waiting). -/
 def fetchModule (l : Loader) (url : String) (credentials : Bool) : Loader × Option (Except String (String × String)) :=
   match fetchSteps 64 l (plan (moduleTransfer l.page url credentials)) with
   | (l, none) => (l, none)
   | (l, some (.error why)) => (l, some (.error why))
-  | (l, some (.ok r)) => (l, some ((moduleText r).map fun t => (if r.url.isEmpty then url else r.url, t)))
+  | (l, some (.ok r)) => (l, some ((checkedModuleText r (integrityOf l url)).map fun t => (if r.url.isEmpty then url else r.url, t)))
 
 /-- A parsed module in the graph (or its parse error), with no requests followed yet. -/
 def addParsed (l : Loader) (parsed : Except String JS.ModNode) : Loader × Entry :=
@@ -161,7 +186,9 @@ def addModule (l : Loader) (url text : String) : Loader × Entry :=
 same request at the same point of the answers (`Fetched`). -/
 def fetchParsed (l : Loader) (url : String) (cred : Bool) :
     Loader × Option (Except String (Except String JS.ModNode)) :=
-  match l.memo.find? (fun f => f.url == url && f.credentials == cred && f.usedBefore == l.used) with
+  let integrity := integrityOf l url
+  match l.memo.find? (fun f =>
+      f.url == url && f.credentials == cred && f.integrity == integrity && f.usedBefore == l.used) with
   | some f => ({ l with used := f.usedAfter }, some f.result)
   | none =>
     let before := l.used
@@ -169,7 +196,7 @@ def fetchParsed (l : Loader) (url : String) (cred : Bool) :
     | (l, none) => (l, none)
     | (l, some r) =>
       let res := r.map fun (final, text) => parseAt final text
-      ({ l with memo := l.memo.push { url, credentials := cred, usedBefore := before, usedAfter := l.used, result := res } }, some res)
+      ({ l with memo := l.memo.push { url, credentials := cred, integrity, usedBefore := before, usedAfter := l.used, result := res } }, some res)
 
 /-- Kind: equivalence. Says: with nothing kept for the request, `fetchParsed` answers what
 `fetchModule` and `parseAt` answer, and moves through the answers as `fetchModule` does. Does
@@ -177,12 +204,10 @@ not say that a kept entry is right: that holds when each entry was made by this 
 same page and the same answers before `usedAfter`, which `WebScripts` keeps by holding the memo
 only between the attempts of one start (it is cleared with `syncCache`); that is not proved. -/
 theorem fetchParsed_miss (l : Loader) (url : String) (cred : Bool)
-    (h : l.memo.find? (fun f => f.url == url && f.credentials == cred && f.usedBefore == l.used) = none) :
+    (h : l.memo.find? (fun f => f.url == url && f.credentials == cred && f.integrity == integrityOf l url && f.usedBefore == l.used) = none) :
     (fetchParsed l url cred).2 = (fetchModule l url cred).2.map (·.map fun (final, text) => parseAt final text) ∧
     (fetchParsed l url cred).1.used = (fetchModule l url cred).1.used := by
-  unfold fetchParsed
-  rw [h]
-  simp only []
+  simp only [fetchParsed, h]
   cases fetchModule l url cred with
   | mk l' r => cases r <;> simp
 
@@ -222,7 +247,10 @@ def visitKids : Nat → Loader → Nat → List String → Bool → Loader × Bo
   | _ + 1, l, _, [], _ => (l, true)
   | n + 1, l, i, spec :: rest, cred =>
     let base := (l.graph[i]?.map (·.url)).getD ""
-    match resolveSpecifier spec base with
+    let url := match l.importMap with
+      | none => resolveSpecifier spec base
+      | some rules => ImportMap.resolve rules spec base
+    match url with
     | none => visitKids n (addKid l i spec (.unresolved spec)) i rest cred
     | some u =>
       match visit n l u cred with
@@ -244,7 +272,7 @@ def outcome (l : Loader) (root : Entry) (external : Bool) : Outcome :=
     let firstErr := (reach.reverse.flatMap fun i => ((l.kids[i]?).getD #[]).toList).findSome? fun (_, c) =>
       match c with
       | .entry (.parseError m) => some (Outcome.rethrow true m)
-      | .unresolved s => some (.rethrow false s!"Failed to resolve module specifier \"{s}\": import maps are not supported, and a relative specifier must start with \"/\", \"./\" or \"../\"")
+      | .unresolved s => some (.rethrow false s!"Failed to resolve module specifier \"{s}\"")
       | _ => none
     firstErr.getD (.run r external)
 
@@ -255,14 +283,17 @@ structure Script where
   src : Option String
   source : String
   credentials : Bool
+  mapsBefore : Array (Nat × String) := #[]
   deriving Inhabited
 
 private def attrOf (n : DOM.Node) (name : String) : Option String :=
   (n.attrs.find? (fun a => a.ns.isNone && a.lname == name)).map (·.value)
 
+private def scriptType (n : DOM.Node) : String :=
+  ((attrOf n "type").getD "").trimAscii.toString.toLower
+
 /-- The `type` of a script element names a module script. -/
-def isModuleType (n : DOM.Node) : Bool :=
-  ((attrOf n "type").getD "").trimAscii.toString.toLower == "module"
+def isModuleType (n : DOM.Node) : Bool := scriptType n == "module"
 
 /-- The document's base URL: the first `base` element with `href`, resolved against the
 document's URL (HTML §2.4.1, frozen base URL). -/
@@ -274,15 +305,42 @@ def baseOf (dom : DOM.Dom) (url : String) : String := Id.run do
         return ((WHATWG.URL.parseUrl h (some url)).map (·.serialize)).getD url
   return url
 
-/-- The module script elements of the document, in tree order. -/
+/-- The module script elements and preceding inline import maps, in tree order.
+At most sixteen maps are admitted per document. External import maps are unsupported. -/
 def scriptsOf (dom : DOM.Dom) : Array Script := Id.run do
   let mut out := #[]
+  let mut pending := #[]
+  let mut remainingMaps := 16
   for id in dom.treeOrder 0 do
     let n := dom.get id
-    if DOM.Dom.isHtmlElement n "script" && isModuleType n then
-      let cred := ((attrOf n "crossorigin").map (·.trimAscii.toString.toLower)) == some "use-credentials"
-      out := out.push { node := id, src := attrOf n "src", source := (dom.textContent id).getD "", credentials := cred }
+    if DOM.Dom.isHtmlElement n "script" then
+      let kind := scriptType n
+      if kind == "module" then
+        let cred := ((attrOf n "crossorigin").map (·.trimAscii.toString.toLower)) == some "use-credentials"
+        out := out.push {
+          node := id, src := attrOf n "src", source := (dom.textContent id).getD ""
+          credentials := cred, mapsBefore := pending }
+        pending := #[]
+      else if kind == "importmap" && remainingMaps > 0 && (attrOf n "src").isNone then
+        pending := pending.push (id, (dom.textContent id).getD "")
+        remainingMaps := remainingMaps - 1
   return out
+
+/-- A late map may not change already resolved imports. The import-map registration budget
+bounds work on those records. Failure to collect within the budget leaves the old map in place. -/
+private def resolvedImports (l : Loader) : Option (Array (String × String)) := Id.run do
+  let mut seen := #[]
+  let mut visited := 0
+  if l.kids.size > 2048 then return none
+  for i in [:l.kids.size] do
+    let base := (l.graph[i]?.map (·.url)).getD ""
+    for (spec, child) in l.kids[i]?.getD #[] do
+      if visited >= 2048 then return none
+      visited := visited + 1
+      if let .entry _ := child then
+        let key := ((ImportMap.urlLike spec base).map (·.serialize)).getD spec
+        seen := seen.push (base, key)
+  return some seen
 
 /-- The module scripts of a document and their graph: what each does. -/
 structure Loaded where
@@ -290,6 +348,7 @@ structure Loaded where
   scripts : Array (Nat × Outcome) := #[]
   /-- The sync answers the fetches used (the ones after are a script's `XMLHttpRequest`s). -/
   used : Nat := 0
+  importMapViolations : Array String := #[]
   deriving Inhabited
 
 /-- Load the module scripts of a document: `.error w` asks the host for request `w` (the
@@ -298,13 +357,25 @@ attempts of the same start fetched and parsed (`memo`, `Fetched`), and those of 
 after them, for the next. A document with no module
 script makes no request and reads nothing but its tree. -/
 def load (dom : DOM.Dom) (docUrl : String) (page : Page) (answers : Array Answer)
-    (memo : Array Fetched := #[]) : Except Wire Loaded × Array Fetched := Id.run do
+    (memo : Array Fetched := #[]) (csp reportOnly : String := "") : Except Wire Loaded × Array Fetched := Id.run do
   let scripts := scriptsOf dom
   if scripts.isEmpty then return (.ok {}, memo)
   let base := baseOf dom docUrl
+  let maps := scripts.flatMap (·.mapsBefore)
+  let (allowed, violations) := if maps.isEmpty then (#[], #[]) else
+    HTML.CspSource.filterScripts csp reportOnly page dom base maps
   let mut l : Loader := { page, answers, memo }
   let mut out : Array (Nat × Outcome) := #[]
   for sc in scripts do
+    if !sc.mapsBefore.isEmpty then
+      let seen := resolvedImports l
+      for (node, text) in sc.mapsBefore do
+        if allowed.any (·.1 == node) then
+          if let some previous := seen then
+            if let some map := ImportMap.parse text base then
+              l := { l with importMap := some ((l.importMap.getD {}).merge (map.withoutResolved previous)) }
+            else
+              out := out.push (node, .rethrow true "Invalid or oversized import map")
     match sc.src with
     | some src =>
       match resolveSpecifier' src base with
@@ -325,7 +396,7 @@ def load (dom : DOM.Dom) (docUrl : String) (page : Page) (answers : Array Answer
         if !ok then return (.error (l.wanted.getD (moduleTransfer page base sc.credentials).mainWire), l.memo)
         out := out.push (sc.node, outcome l e false)
       | e => out := out.push (sc.node, outcome l e false)
-  return (.ok { graph := l.graph, scripts := out, used := l.used }, l.memo)
+  return (.ok { graph := l.graph, scripts := out, used := l.used, importMapViolations := violations }, l.memo)
 where
   /-- The `src` of a script element: any URL, relative to the document's base URL. -/
   resolveSpecifier' (src base : String) : Option String :=
@@ -354,8 +425,12 @@ theorem moduleText_ok (r : Response) (t : String) (h : moduleText r = .ok t) :
 
 /-- Kind: invariant. Says: a document with no module script asks the host for nothing and
 uses no answer, and keeps the modules it was given. Does not say: anything about its classic scripts. -/
-theorem load_none (dom : DOM.Dom) (url : String) (p : Page) (a : Array Answer) (m : Array Fetched) (h : scriptsOf dom = #[]) :
-    load dom url p a m = (.ok {}, m) := by
+theorem load_none (dom : DOM.Dom) (url : String) (p : Page) (a : Array Answer) (m : Array Fetched) (h : scriptsOf dom = #[])
+    (csp reportOnly : String := "") :
+    load dom url p a m csp reportOnly = (.ok {}, m) := by
   simp [load, h]
+
+#print axioms checkedModuleText_refuses
+#print axioms checkedModuleText_empty
 
 end L4Factoidal.WasmVM.Hosts.LeanJSModules

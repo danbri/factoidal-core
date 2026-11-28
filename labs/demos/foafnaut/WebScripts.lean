@@ -1475,13 +1475,14 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
       -- the modules of the attempts before, while this start's answers are held (a first
       -- attempt, with no answers, takes none)
       let memo := if held.syncCache.isEmpty then #[] else held.moduleMemo
-      let (loaded, memo) := if hasModule then LeanJSModules.load dom url page held.syncCache memo else (.ok {}, #[])
+      let (loaded, memo) := if hasModule then LeanJSModules.load dom url page held.syncCache memo lim.csp lim.cspReportOnly else (.ok {}, #[])
       if let .error w := loaded then
         -- no script ran: the parse is kept for the next attempt (`startParsed`)
         let parsed := some (html, url, syn, (scripts0, missing, hasModule, dom))
         return ({ held with leanBase := some base, pendingSync := some ("start", html, request), startEntropy := some ent, moduleMemo := memo, startParsed := parsed }, netSyncAnswer id w)
       let mods := match loaded with | .ok m => m | .error _ => {}
-      let lim := { lim with syncAnswers := held.syncCache.extract mods.used held.syncCache.size }
+      let lim := { lim with syncAnswers := held.syncCache.extract mods.used held.syncCache.size,
+        cspViolations := lim.cspViolations ++ mods.importMapViolations }
       let (vw, vh) := (viewport request).getD (800, 600)
       let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
       -- BubblePopJS steps, not QuickJS instructions: its own rate (`LeanJS.stepsPerMs`)
