@@ -4,7 +4,7 @@ use std::error::Error;
 use std::path::Path;
 use std::time::Instant;
 
-use engine::{Engine, Session};
+use engine::{DeviceLimits, Engine, Session};
 use serde_json::{Value, json};
 
 const FIXTURE: &str = include_str!("../click.html");
@@ -124,13 +124,67 @@ fn smoke(library: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let mut args = std::env::args_os().skip(1);
-    let library = args
-        .next()
-        .ok_or("Usage: foafnaut-native-desktop LIBWEB_RENDER")?;
-    if args.next().is_some() {
-        return Err("Usage: foafnaut-native-desktop LIBWEB_RENDER".into());
+fn check_render_plan(library: &Path) -> Result<(), Box<dyn Error>> {
+    let engine = Engine::open(library)?;
+    let mut session = engine.session()?;
+    let start = start(&mut session)?;
+    let scene = frame(&mut session, &start["commands"])?;
+    let floats = u32::try_from(scene["data"].as_array().ok_or("missing scene data")?.len())?;
+    let limits = DeviceLimits {
+        uniform_bytes: 16,
+        texture_dimension: 4096,
+        storage_bytes: 16 * 1024 * 1024,
+        buffer_bytes: 16 * 1024 * 1024,
+    };
+    let plan = engine.render_plan(c"svg-window", c"bgra8unorm", SIZE, floats, &limits)?;
+    // This is a smoke-test assertion for fixed inputs. The renderer will execute
+    // the engine's returned descriptors and commands.
+    if plan["abi"] != "lean-render-plan-v1"
+        || plan["mode"] != "svg-window"
+        || plan["format"] != "bgra8unorm"
+        || plan["width"] != SIZE[0]
+        || plan["height"] != SIZE[1]
+        || plan["uniform"]["bindingType"] != "read-only-storage"
+        || plan["uniform"]["floatCount"] != floats
+        || plan["surface"]["usage"] != json!(["render-attachment"])
+        || plan.get("readback").is_some()
+        || plan["commands"]
+            != json!([
+                "beginPass",
+                "setPipeline",
+                "setBindGroup",
+                "draw",
+                "endPass",
+                "submit",
+                "present"
+            ])
+    {
+        return Err(format!("unexpected window plan: {plan}").into());
     }
-    smoke(Path::new(&library))
+    let limited = DeviceLimits {
+        storage_bytes: 0,
+        ..limits
+    };
+    match engine.render_plan(c"svg-window", c"bgra8unorm", SIZE, floats, &limited) {
+        Err(error) if error.to_string() == "storage bytes exceed device limit" => {}
+        result => return Err(format!("expected a storage limit refusal, got {result:?}").into()),
+    }
+    println!(
+        "{}",
+        json!({"nativeRenderPlan": "svg-window", "storageLimitRefused": true})
+    );
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    const USAGE: &str = "Usage: foafnaut-native-desktop LIBWEB_RENDER [--check-render-plan]";
+    let mut args = std::env::args_os().skip(1);
+    let library = args.next().ok_or(USAGE)?;
+    match (args.next().as_deref(), args.next()) {
+        (None, None) => smoke(Path::new(&library)),
+        (Some(flag), None) if flag == "--check-render-plan" => {
+            check_render_plan(Path::new(&library))
+        }
+        _ => Err(USAGE.into()),
+    }
 }

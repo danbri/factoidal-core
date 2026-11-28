@@ -11,6 +11,24 @@ type FreeSession = unsafe extern "C" fn(*mut c_void);
 type Call =
     unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char, u32, u32) -> *mut c_char;
 type FreeAnswer = unsafe extern "C" fn(*mut c_char);
+type RenderPlan = unsafe extern "C" fn(
+    *const c_char,
+    *const c_char,
+    u32,
+    u32,
+    u32,
+    u32,
+    u32,
+    u32,
+    u32,
+) -> *mut c_char;
+
+pub struct DeviceLimits {
+    pub uniform_bytes: u32,
+    pub texture_dimension: u32,
+    pub storage_bytes: u32,
+    pub buffer_bytes: u32,
+}
 
 struct Library(NonNull<c_void>);
 
@@ -52,7 +70,7 @@ fn loader_error() -> Box<dyn std::error::Error> {
 }
 
 pub struct Engine {
-    _library: Library,
+    library: Library,
     new_session: NewSession,
     free_session: FreeSession,
     call: Call,
@@ -78,9 +96,51 @@ impl Engine {
                 free_answer: std::mem::transmute::<*mut c_void, FreeAnswer>(
                     library.symbol(c"web_render_free")?.as_ptr(),
                 ),
-                _library: library,
+                library,
             })
         }
+    }
+
+    pub fn render_plan(
+        &self,
+        mode: &CStr,
+        format: &CStr,
+        size: [u32; 2],
+        floats: u32,
+        limits: &DeviceLimits,
+    ) -> Result<Value> {
+        let symbol = self.library.symbol(c"web_render_plan")?;
+        // SAFETY: this is the native shim's declared signature. The strings and
+        // the engine library remain live for the call.
+        let result = unsafe {
+            let call = std::mem::transmute::<*mut c_void, RenderPlan>(symbol.as_ptr());
+            call(
+                mode.as_ptr(),
+                format.as_ptr(),
+                size[0],
+                size[1],
+                floats,
+                limits.uniform_bytes,
+                limits.texture_dimension,
+                limits.storage_bytes,
+                limits.buffer_bytes,
+            )
+        };
+        self.read_answer(result)
+    }
+
+    fn read_answer(&self, result: *mut c_char) -> Result<Value> {
+        let result = NonNull::new(result).ok_or("the native engine returned no answer")?;
+        // SAFETY: the engine returns an owned, NUL-terminated string. Decode to an
+        // owned result, then free the C allocation even when decoding fails.
+        let decoded =
+            unsafe { serde_json::from_slice::<Value>(CStr::from_ptr(result.as_ptr()).to_bytes()) };
+        unsafe { (self.free_answer)(result.as_ptr()) };
+        let decoded = decoded?;
+        if let Some(message) = decoded["error"].as_str() {
+            return Err(message.to_owned().into());
+        }
+        Ok(decoded)
     }
 
     pub fn session(&self) -> Result<Session<'_>> {
@@ -114,17 +174,7 @@ impl Session<'_> {
                 size[1],
             )
         };
-        let result = NonNull::new(result).ok_or("the native engine returned no answer")?;
-        // SAFETY: the engine returns an owned, NUL-terminated string. Decode to an
-        // owned result, then free the C allocation even when decoding fails.
-        let decoded =
-            unsafe { serde_json::from_slice::<Value>(CStr::from_ptr(result.as_ptr()).to_bytes()) };
-        unsafe { (self.engine.free_answer)(result.as_ptr()) };
-        let decoded = decoded?;
-        if let Some(message) = decoded["error"].as_str() {
-            return Err(message.to_owned().into());
-        }
-        Ok(decoded)
+        self.engine.read_answer(result)
     }
 }
 

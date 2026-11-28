@@ -273,7 +273,7 @@ if [ "$MODE" = --native ]; then
       LIBRARY="$BUILD/engines/libweb-render.dylib"
       SHARED=(-dynamiclib -Wl,-dead_strip -lc++ ${AUDIO_FRAMEWORKS[@]+"${AUDIO_FRAMEWORKS[@]}"})
       # Exports are dead-strip roots. Keep the shim ABI and let ld discard unused engine internals.
-      for symbol in "${SHIM_EXPORTS[@]}"; do SHARED+=("-Wl,-exported_symbol,$symbol"); done
+      for symbol in "${SHIM_EXPORTS[@]}" _web_render_plan; do SHARED+=("-Wl,-exported_symbol,$symbol"); done
       ;;
     Linux) LIBRARY="$BUILD/engines/libweb-render.so";;
     *) LIBRARY="";;

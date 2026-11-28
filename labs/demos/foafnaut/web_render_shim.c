@@ -247,6 +247,34 @@ char *web_render_font_call(const char *html,const char *font_data,uint32_t width
   char *copy=strdup(lean_string_cstr(value)); lean_dec(value); return copy;
 }
 void web_render_free(char *value) { free(value); }
+#ifndef __EMSCRIPTEN__
+/* The native desktop uses the same proved plan as the browser's Wasm host.
+   First use initialises only the plan module. The regular document path does
+   not use it. The caller supplies device limits and frees the answer with
+   web_render_free. */
+extern lean_object *initialize_RenderPlan(uint8_t builtin);
+extern lean_object *render_plan_request(lean_object *, lean_object *, uint32_t,
+  uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t);
+static pthread_once_t render_plan_once=PTHREAD_ONCE_INIT;
+static int render_plan_started;
+static void render_plan_start(void) {
+  lean_object *init=initialize_RenderPlan(1);
+  render_plan_started=lean_io_result_is_ok(init);
+  lean_dec(init);
+}
+char *web_render_plan(const char *mode,const char *format,uint32_t width,uint32_t height,
+    uint32_t floats,uint32_t maxUniformBytes,uint32_t maxDimension,
+    uint32_t maxStorageBytes,uint32_t maxBufferBytes) {
+  if (!ready()) return NULL;
+  pthread_once(&render_plan_once,render_plan_start);
+  if (!render_plan_started) return NULL;
+  lean_object *value=render_plan_request(lean_mk_string(mode),lean_mk_string(format),
+    width,height,floats,maxUniformBytes,maxDimension,maxStorageBytes,maxBufferBytes);
+  char *copy=strdup(lean_string_cstr(value));
+  lean_dec(value);
+  return copy;
+}
+#endif
 extern lean_object *web_document_compile(lean_object *,lean_object *,lean_object *,uint32_t,uint32_t);
 /* A document request on session `s` (WebDocument.compile); the answer is JSON text. */
 char *web_session_call(web_session *s,const char *html,const char *request,uint32_t width,uint32_t height) {

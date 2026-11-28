@@ -21,3 +21,15 @@ The prototype reports milliseconds from before loading the library to the first 
 Reuse the AppKit window bridge on macOS and use a Linux window surface for the same fixture. The engine already supplies WGSL and scene data. Its existing RenderPlan contract also supplies pipeline descriptors and the command sequence. The native host needs access to that plan before it can drive `wgpu` with the same inputs as the existing host. The window must forward actual pointer events and present the two resulting frames. The cross-platform comparison then uses the same engine build, fixture and viewport for startup, first frame, frame time, input latency and peak memory.
 
 The engine checkpoint uses local data. The transport milestone in issue #1233 covers engine-owned redirect, address, TLS and proxy policy.
+
+## Native render plan
+
+`web_render_plan` is a native entry point to the existing Lean render-plan generator. It accepts the viewport, scene float count, surface format and actual device limits. It returns the same JSON contract used by the existing host and uses `web_render_free` for returned storage. The plan module initialises on first use.
+
+Lean's new `svg-window` mode uses the storage-backed scene format and a presentable surface. The `svg_window_commands` and `svg_window_resources` theorems establish the command sequence and resource types. The existing `Plan` fields still carry the device, buffer and scene-size bounds. These proofs concern Lean's plan. The ABI smoke check uses a native build from this branch and verifies a real scene's accepted plan and a refusal when the supplied storage capacity is zero:
+
+```sh
+cargo run --locked --release --manifest-path labs/demos/foafnaut/native-desktop/Cargo.toml -- /path/to/libweb-render.dylib --check-render-plan
+```
+
+The Rust probe only forwards facts, parses the answer and asserts the expected contract for its fixed fixture. The presentation adapter will dispatch the plan's operations to the GPU and surface.
