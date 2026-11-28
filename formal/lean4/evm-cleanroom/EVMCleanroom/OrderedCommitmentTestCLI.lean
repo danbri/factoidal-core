@@ -59,6 +59,7 @@ private def checked (a : Keccak.Acceptance) (c : SecpRecovery.Acceptance) (value
   | .ok out => return Json.mkObj [("status", .str "commitment-checked"),
       ("transactionRoot", .str (hexBytes out.roots.transactions)),
       ("receiptsRoot", .str (hexBytes out.roots.receipts)),
+      ("logsBloom", .str (hexBytes out.roots.logsBloom)),
       ("receipts", toJson out.execution.receipts.length)]
 
 private def rootOnly (a : Keccak.Acceptance) (value : Json) : Except String Json := do

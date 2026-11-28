@@ -10,6 +10,7 @@ inductive Error where
   | observationShape
   | transactionRootMismatch
   | receiptRootMismatch
+  | logsBloomMismatch
   deriving Repr, DecidableEq
 
 def bytesRLP (b : Array UInt8) : Array UInt8 :=
@@ -88,7 +89,9 @@ def addBloom (a : Keccak.Acceptance) (bloom value : Array UInt8) : Array UInt8 :
     result := result.set! i ((result[i]?.getD 0) ||| UInt8.ofNat (2^(bit%8)))
   return result
 
-def receiptBytes (a : Keccak.Acceptance) (r : TransactionList.Receipt) : Except Error (Array UInt8) := do
+/-- Return the encoded receipt and the very same bloom used inside it. -/
+def receiptEncoding (a : Keccak.Acceptance) (r : TransactionList.Receipt) :
+    Except Error (Array UInt8 × Array UInt8) := do
   if r.kind > 3 || r.cumulativeGasUsed ≥ 2^64 then throw .observationShape
   if r.logs.foldl (fun n log => n + log.data.size + 32 * log.topics.length + 20) 0 >
       TransactionList.maxObservationBytes then throw .resourceLimit
@@ -105,19 +108,27 @@ def receiptBytes (a : Keccak.Acceptance) (r : TransactionList.Receipt) : Except 
     logs := logs.push (listRLP #[bytesRLP address, listRLP (topics.map bytesRLP), bytesRLP data])
   let body := listRLP #[SignedTransaction.encodeScalar (if r.receiptStatus then 1 else 0),
     SignedTransaction.encodeScalar r.cumulativeGasUsed, bytesRLP bloom, listRLP logs]
-  return if r.kind == 0 then body else #[UInt8.ofNat r.kind] ++ body
+  let encoded := if r.kind == 0 then body else #[UInt8.ofNat r.kind] ++ body
+  return (encoded, bloom)
+
+def receiptBytes (a : Keccak.Acceptance) (r : TransactionList.Receipt) : Except Error (Array UInt8) := do
+  return (← receiptEncoding a r).1
 
 structure Roots where
   transactions : Array UInt8
   receipts : Array UInt8
+  logsBloom : Array UInt8
 
 def compute (a : Keccak.Acceptance) (entries : List SignedTransaction.RawEntry)
     (result : TransactionList.Result) : Except Error Roots := do
   if entries.length != result.receipts.length then throw .observationShape
   let txRoot ← root a (entries.map (·.raw))
-  let receipts ← result.receipts.mapM (receiptBytes a)
-  let receiptRoot ← root a receipts
-  return ⟨txRoot, receiptRoot⟩
+  let receipts ← result.receipts.mapM (receiptEncoding a)
+  let receiptRoot ← root a (receipts.map Prod.fst)
+  let bloom := receipts.foldl (fun (block : Array UInt8) receipt =>
+    (Array.range 256).map fun i => (block[i]?.getD 0) ||| (receipt.2[i]?.getD 0))
+    (Array.replicate 256 0)
+  return ⟨txRoot, receiptRoot, bloom⟩
 
 structure Checked (a : Keccak.Acceptance) (c : SecpRecovery.Acceptance)
     (parent child : HeaderRLP.Fields) (accounts : List WitnessAdmission.AccountInput)
@@ -128,6 +139,7 @@ structure Checked (a : Keccak.Acceptance) (c : SecpRecovery.Acceptance)
   computed : compute a entries execution = .ok roots
   txMatches : roots.transactions = HeaderRLP.field child 4
   receiptMatches : roots.receipts = HeaderRLP.field child 5
+  bloomMatches : roots.logsBloom = HeaderRLP.field child 6
 
 inductive Refusal where
   | prior (result : TransactionList.Outcome)
@@ -147,7 +159,9 @@ def run (a : Keccak.Acceptance) (c : SecpRecovery.Acceptance)
     | .ok roots =>
       if ht : roots.transactions = HeaderRLP.field child 4 then
         if hr : roots.receipts = HeaderRLP.field child 5 then
-          .ok ⟨execution, roots, h, hc, ht, hr⟩
+          if hb : roots.logsBloom = HeaderRLP.field child 6 then
+            .ok ⟨execution, roots, h, hc, ht, hr, hb⟩
+          else .error (.commitment .logsBloomMismatch)
         else .error (.commitment .receiptRootMismatch)
       else .error (.commitment .transactionRootMismatch)
   | .rejected index why => .error (.prior (.rejected index why))
@@ -164,6 +178,15 @@ theorem checked_source (a : Keccak.Acceptance) (c : SecpRecovery.Acceptance)
     out.roots.receipts = HeaderRLP.field child 5 :=
   ⟨out.ran, out.computed, out.txMatches, out.receiptMatches⟩
 
+/-- Kind: checked executable linkage.
+Says: the actual checked output binds the OR of receipt blooms to child field 6.
+Does not say: Keccak or the receipt encoding is normatively refined, or the block is valid. -/
+theorem checked_bloom (a : Keccak.Acceptance) (c : SecpRecovery.Acceptance)
+    (parent child : HeaderRLP.Fields) (accounts : List WitnessAdmission.AccountInput)
+    (entries : List SignedTransaction.RawEntry) (out : Checked a c parent child accounts entries) :
+    out.roots.logsBloom = HeaderRLP.field child 6 :=
+  out.bloomMatches
+
 theorem child_inline (a : Keccak.Acceptance) (encoded : Array UInt8) (h : encoded.size < 32) :
     childRLP a encoded = encoded := by simp only [childRLP, if_pos h]
 
@@ -171,6 +194,7 @@ theorem child_hash (a : Keccak.Acceptance) (encoded : Array UInt8) (h : ¬ encod
     childRLP a encoded = bytesRLP (MPT.hashBytes a encoded) := by simp only [childRLP, if_neg h]
 
 #print axioms checked_source
+#print axioms checked_bloom
 #print axioms child_inline
 #print axioms child_hash
 

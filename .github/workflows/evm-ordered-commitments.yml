@@ -43,7 +43,7 @@ jobs:
           python3 - "$RUNNER_TEMP/ordered/axioms.log" <<'PY'
           import re, sys
           text = open(sys.argv[1]).read()
-          names = ('checked_source', 'child_inline', 'child_hash')
+          names = ('checked_source', 'child_inline', 'child_hash', 'checked_bloom')
           for name in names:
               rows = [line for line in text.splitlines() if "'EVMCleanroom.OrderedCommitments." + name + "'" in line]
               assert len(rows) == 1, (name, rows)
