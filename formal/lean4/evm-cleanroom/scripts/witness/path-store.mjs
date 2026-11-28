@@ -44,7 +44,7 @@ await t.put(bytes(b),bytes('02'))
 const oldA=await proofRequest(t,bytes(a))
 let history=merge(oldA.proof,(await proofRequest(t,bytes(b))).proof)
 let root=oldA.root
-let lastKey=a,lastValue='01'
+let lastKey=a
 for(let i=1;i<=72;i++){
   const key=i%2?a:b
   const value=(BigInt(i)+(1n<<248n)).toString(16).padStart(64,'0')
@@ -54,9 +54,10 @@ for(let i=1;i<=72;i++){
   history=merge(history,request.proof)
   const path=await selected(root,key,history,value)
   assert.deepEqual(new Set(path),new Set(request.proof),'exact reachable hashed path')
-  lastKey=key;lastValue=value
+  lastKey=key
 }
-assert(history.length>128)
+assert.equal(history.length,147)
+assert.equal(root,'17944d3fb22b525a727c390358f82e81fcdd714255bcde6dfda0013f8a5c4393')
 await selected(oldA.root,a,history,'01')
 await selected(root,absent,history,null)
 const noRoot=history.filter(n=>hex(keccak(bytes(n)))!==root)
@@ -84,5 +85,6 @@ await selected(s.root,absent,sm.proof,null)
 assert.equal(membership,75)
 assert.equal(nonmembership,4)
 assert.equal(refusalControls,7)
-assert(beyond128>0)
+assert.equal(beyond128,13)
+assert.equal(maxPath,3)
 console.log(JSON.stringify({membership,nonmembership,beyond128,maxBag,maxPath,refusalControls,executableSha256:digest(readFileSync(binary))}))
