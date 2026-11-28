@@ -258,7 +258,8 @@ def operationCase (o : Options) (handler : String) : Option CaseFn :=
   | "withdrawals" => simple ExecutionPayload.codec "execution_payload.ssz_snappy"
       fun c s payload => processWithdrawals c.p s payload
   | "execution_payload" => some fun dir timer => do
-      let valid := (yamlBool (← readText (dir / "execution.yaml")) "execution_valid").getD true
+      let some valid := parseExecutionVerdict (← readText (dir / "execution.yaml"))
+        | throw (IO.userError "missing or malformed execution.yaml verdict")
       transitionCase o dir timer (fun c => { c with fixtureExecutionVerdict := some valid })
         (withOp BeaconBlockBody.codec p (dir / "body.ssz_snappy") fun c s body =>
           -- Negative control on the same decoded input, including invalid vectors.
