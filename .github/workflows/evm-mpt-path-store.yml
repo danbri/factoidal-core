@@ -44,7 +44,7 @@ jobs:
           import os,re
           from pathlib import Path
           log=Path(os.environ["RUNNER_TEMP"],"sparse-axioms.txt").read_text()
-          for name in ("select_checked","collect_zero","admit_oversized"):
+          for name in ("select_checked","collect_zero","admit_oversized","extend_oversized"):
               lines=[line for line in log.splitlines() if f"EVMCleanroom.MPTPathStore.{name}'" in line]
               assert len(lines)==1, (name,lines)
               line=lines[0]
@@ -91,7 +91,7 @@ jobs:
           runtime=json.loads((root/"sparse-runtime.json").read_text())
           assert runtime["passed"] and runtime["sha256"] == native["executableSha256"] == hashlib.sha256(Path(".lake/build/bin/evm-mpt-path-store-probe").read_bytes()).hexdigest()
           assert (native["membership"],native["nonmembership"],native["refusalControls"]) == (75,4,7),native
-          assert native["beyond128"] > 0 and native["maxBag"] == 4096 and native["maxPath"] <= 65,native
+          assert native["beyond128"] == 13 and native["maxBag"] == 4096 and native["maxPath"] == 3,native
           PY
       - uses: actions/upload-artifact@v4
         if: always()
