@@ -1,0 +1,11 @@
+name = "evm_cleanroom"
+version = "0.1.0"
+defaultTargets = ["evm-mpt-path-store-probe"]
+moreLeanArgs = ["-j1", "-M2048", "-s32768"]
+
+[[lean_lib]]
+name = "EVMCleanroom"
+
+[[lean_exe]]
+name = "evm-mpt-path-store-probe"
+root = "EVMCleanroom.MPTPathStoreProbe"
