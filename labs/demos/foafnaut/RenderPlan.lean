@@ -9,7 +9,7 @@ import Init
    resource cleanup remain host policy in this first increment. -/
 namespace NativeRenderPlan
 
-inductive Mode where | window | offscreen | svgOffscreen
+inductive Mode where | window | offscreen | svgOffscreen | svgWindow
   deriving Repr, BEq, DecidableEq
 inductive Format where | rgba8unorm | bgra8unorm
   deriving Repr, BEq, DecidableEq
@@ -19,7 +19,16 @@ inductive Command where
   deriving Repr, BEq, DecidableEq
 
 def Mode.wire : Mode → String
-  | .window => "window" | .offscreen => "offscreen" | .svgOffscreen => "svg-offscreen"
+  | .window => "window" | .offscreen => "offscreen"
+  | .svgOffscreen => "svg-offscreen" | .svgWindow => "svg-window"
+
+def Mode.surface : Mode → Bool
+  | .window | .svgWindow => true
+  | .offscreen | .svgOffscreen => false
+
+def Mode.storage : Mode → Bool
+  | .svgOffscreen | .svgWindow => true
+  | .offscreen | .window => false
 def Format.wire : Format → String
   | .rgba8unorm => "rgba8unorm" | .bgra8unorm => "bgra8unorm"
 def Command.wire : Command → String
@@ -32,7 +41,7 @@ def Command.wire : Command → String
 def commands (mode : Mode) : List Command :=
   [.beginPass,.setPipeline,.setBindGroup,.draw,.endPass] ++
   match mode with
-  | .window => [.submit,.present]
+  | .window | .svgWindow => [.submit,.present]
   | .offscreen | .svgOffscreen => [.copyTextureToBuffer,.submit,.mapRead,.readMapped,.unmap]
 
 structure DrawCall where
@@ -92,12 +101,12 @@ def bindGroup : BindingDescriptor := ⟨0,0,0⟩
 def renderPass : PassDescriptor := ⟨0,0,0,1,.clear,.store⟩
 def uniformUsage : List BufferUse := [.uniform,.copyDst]
 def parameterUsage : Mode → List BufferUse
-  | .svgOffscreen => [.storage,.copyDst] | _ => uniformUsage
+  | .svgOffscreen | .svgWindow => [.storage,.copyDst] | _ => uniformUsage
 def bindingType : Mode → String
-  | .svgOffscreen => "read-only-storage" | _ => "uniform"
+  | .svgOffscreen | .svgWindow => "read-only-storage" | _ => "uniform"
 def readbackUsage : List BufferUse := [.copyDst,.mapRead]
 def targetUsage : Mode → List TextureUse
-  | .window => [.renderAttachment] | .offscreen | .svgOffscreen => [.renderAttachment,.copySrc]
+  | .window | .svgWindow => [.renderAttachment] | .offscreen | .svgOffscreen => [.renderAttachment,.copySrc]
 
 def rowBlocks (width : Nat) : Nat :=
   width / 64 + if width % 64 == 0 then 0 else 1
@@ -148,11 +157,11 @@ structure Plan (width height floatCount maxUniformBytes maxDimension maxStorageB
   heightBound : height ≤ maxDimension
   floatsPositive : 0 < floatCount
   vec4Aligned : 4 * (floatCount / 4) = floatCount
-  bindingBound : 4 * floatCount ≤ (if mode = .svgOffscreen then maxStorageBytes else maxUniformBytes)
+  bindingBound : 4 * floatCount ≤ (if mode.storage then maxStorageBytes else maxUniformBytes)
   bufferBound : 4 * floatCount ≤ maxBufferBytes
-  copyBound : mode = .window ∨ readbackBytes width height ≤ maxBufferBytes
-  svgBudget : mode = .svgOffscreen → floatCount ≤ maxSceneFloats
-  offscreenFormat : mode = .window ∨ format = .rgba8unorm
+  copyBound : mode.surface = true ∨ readbackBytes width height ≤ maxBufferBytes
+  svgBudget : mode.storage = true → floatCount ≤ maxSceneFloats
+  offscreenFormat : mode.surface = true ∨ format = .rgba8unorm
 
 def plan (mode format : String)
     (width height floatCount maxUniformBytes maxDimension : Nat)
@@ -160,14 +169,14 @@ def plan (mode format : String)
     Except String (Plan width height floatCount maxUniformBytes maxDimension maxStorageBytes maxBufferBytes) := do
   let selectedMode ← match mode with
     | "window" => pure Mode.window | "offscreen" => pure Mode.offscreen
-    | "svg-offscreen" => pure Mode.svgOffscreen
-    | _ => throw "mode must be window, offscreen or svg-offscreen"
+    | "svg-offscreen" => pure Mode.svgOffscreen | "svg-window" => pure Mode.svgWindow
+    | _ => throw "mode must be window, offscreen, svg-offscreen or svg-window"
   let selectedFormat ← match format with
     | "rgba8unorm" => pure Format.rgba8unorm | "bgra8unorm" => pure Format.bgra8unorm
     | _ => throw "format must be rgba8unorm or bgra8unorm"
-  let capacity := if selectedMode = .svgOffscreen then maxStorageBytes else maxUniformBytes
-  if copyBound : selectedMode = .window ∨ readbackBytes width height ≤ maxBufferBytes then
-    if budget : selectedMode = .svgOffscreen → floatCount ≤ maxSceneFloats then
+  let capacity := if selectedMode.storage then maxStorageBytes else maxUniformBytes
+  if copyBound : selectedMode.surface = true ∨ readbackBytes width height ≤ maxBufferBytes then
+    if budget : selectedMode.storage = true → floatCount ≤ maxSceneFloats then
       if hw : 0 < width then
         if hh : 0 < height then
           if hwb : width ≤ maxDimension then
@@ -176,16 +185,16 @@ def plan (mode format : String)
                 if ha : 4 * (floatCount / 4) = floatCount then
                   if hb : 4 * floatCount ≤ capacity then
                     if hbuffer : 4 * floatCount ≤ maxBufferBytes then
-                      let actualFormat := match selectedMode with | .window => selectedFormat | _ => Format.rgba8unorm
+                      let actualFormat := if selectedMode.surface then selectedFormat else Format.rgba8unorm
                       return {
                         mode := selectedMode, format := actualFormat,
                         widthPositive := hw, heightPositive := hh,
                         widthBound := hwb, heightBound := hhb,
                         floatsPositive := hp, vec4Aligned := ha, bindingBound := hb,
                         bufferBound := hbuffer, copyBound, svgBudget := budget,
-                        offscreenFormat := by cases selectedMode <;> simp_all [actualFormat] }
+                        offscreenFormat := by cases selectedMode <;> simp_all [actualFormat, Mode.surface] }
                     else throw "parameter bytes exceed device buffer capacity"
-                  else throw (if selectedMode == .svgOffscreen then "storage bytes exceed device limit" else "uniform bytes exceed device limit")
+                  else throw (if selectedMode.storage then "storage bytes exceed device limit" else "uniform bytes exceed device limit")
                 else throw "floatCount must contain complete vec4 rows"
               else throw "floatCount must be positive"
             else throw "height exceeds device limit"
@@ -221,6 +230,17 @@ theorem pass_contract : renderPass.clearR = 0 ∧ renderPass.clearG = 0 ∧
 
 theorem window_submit_before_present :
     commands .window = [.beginPass,.setPipeline,.setBindGroup,.draw,.endPass,.submit,.present] := rfl
+/-- Kind: property. Says: a storage-backed window uses the same ordered surface commands
+as a uniform-backed window. Does not say: the host, shader or driver executes them correctly. -/
+theorem svg_window_commands : commands .svgWindow = commands .window := rfl
+
+/-- Kind: property. Says: a storage-backed window allocates a storage binding and a surface
+target. Does not say: the host supplies the correct device limits. -/
+theorem svg_window_resources :
+    parameterUsage .svgWindow = [.storage,.copyDst] ∧
+    bindingType .svgWindow = "read-only-storage" ∧
+    targetUsage .svgWindow = [.renderAttachment] := ⟨rfl,rfl,rfl⟩
+
 theorem offscreen_copy_submit_map_read :
     commands .offscreen = [.beginPass,.setPipeline,.setBindGroup,.draw,.endPass,
       .copyTextureToBuffer,.submit,.mapRead,.readMapped,.unmap] := rfl
@@ -235,7 +255,7 @@ private def strings (xs : List String) : String := "[" ++ String.intercalate ","
 def Plan.json {width height floatCount maxUniformBytes maxDimension maxStorageBytes maxBufferBytes : Nat}
     (p : Plan width height floatCount maxUniformBytes maxDimension maxStorageBytes maxBufferBytes) : String :=
   let target := match p.mode with
-    | .window => "\"surface\":{\"alphaMode\":\"opaque\",\"usage\":" ++
+    | .window | .svgWindow => "\"surface\":{\"alphaMode\":\"opaque\",\"usage\":" ++
         strings ((targetUsage p.mode).map TextureUse.wire) ++ "}"
     | .offscreen | .svgOffscreen => "\"texture\":{\"usage\":" ++ strings ((targetUsage p.mode).map TextureUse.wire) ++ ",\"depth\":1}," ++
         "\"readback\":{\"offset\":0,\"bytesPerRow\":" ++ number (bytesPerRow width) ++
@@ -270,5 +290,14 @@ def request (mode format : String)
 def requestABI (mode format : String)
     (width height floatCount maxUniformBytes maxDimension maxStorageBytes maxBufferBytes : UInt32) : String :=
   request mode format width.toNat height.toNat floatCount.toNat maxUniformBytes.toNat maxDimension.toNat maxStorageBytes.toNat maxBufferBytes.toNat
+
+-- A surface with only enough buffer capacity for the scene still admits the plan.
+#guard (plan "svg-window" "bgra8unorm" 480 240 16 32 4096 64 64).isOk
+#guard (plan "svg-window" "bgra8unorm" 480 240 16 64 4096 32 64).isOk == false
+#guard (plan "svg-window" "bgra8unorm" 480 240 (maxSceneFloats + 4) 32 4096 33554432
+  33554432).isOk == false
+
+#print axioms svg_window_commands
+#print axioms svg_window_resources
 
 end NativeRenderPlan
