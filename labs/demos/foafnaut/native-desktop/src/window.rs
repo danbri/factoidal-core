@@ -1,6 +1,7 @@
 use std::ffi::{c_char, c_void};
 use std::path::Path;
 use std::ptr::NonNull;
+use std::time::Duration;
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
@@ -115,10 +116,10 @@ impl Window {
         unsafe { (self.show)() };
     }
 
-    pub fn wait_and_pump(&self) {
+    pub fn wait_and_pump(&self, max_wait: Duration) {
         // SAFETY: all window calls are made on main while the library is live.
         unsafe {
-            (self.wait)(250.0);
+            (self.wait)(max_wait.as_secs_f64() * 1000.0);
             (self.pump)();
         }
     }

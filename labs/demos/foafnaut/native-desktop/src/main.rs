@@ -4,7 +4,7 @@ mod window;
 
 use std::error::Error;
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use engine::{DeviceLimits, Engine, Session};
 use gpu::{Gpu, Scene};
@@ -16,6 +16,14 @@ const URL: &str = "file:///click.html";
 const SIZE: [u32; 2] = [480, 240];
 
 fn start(page: &mut Session<'_>, size: [u32; 2]) -> Result<Value, Box<dyn Error>> {
+    start_document(page, FIXTURE, size)
+}
+
+fn start_document(
+    page: &mut Session<'_>,
+    html: &str,
+    size: [u32; 2],
+) -> Result<Value, Box<dyn Error>> {
     let plan = page.call(
         "",
         &json!({"op":"scriptPlan","setting":"","scripts":1,"host":"native"}),
@@ -25,7 +33,7 @@ fn start(page: &mut Session<'_>, size: [u32; 2]) -> Result<Value, Box<dyn Error>
         return Err(format!("unexpected fresh page-script setting: {plan}").into());
     }
     let turn = page.call(
-        FIXTURE,
+        html,
         &json!({
             "op":"scriptSession","action":"start","url":URL,"resources":[],
             "engine":plan["engine"],"width":size[0],"height":size[1]
@@ -41,6 +49,177 @@ fn check_turn(turn: &Value) -> Result<(), Box<dyn Error>> {
         return Err(format!("script turn failed: {turn}").into());
     }
     Ok(())
+}
+
+// The engine gives both numbers in its own clock. The host only maps elapsed
+// monotonic time to that clock and reports it back when Lean asks for a turn.
+struct Wake {
+    origin: Instant,
+    initial_clock: u64,
+    clock: u64,
+    due: Option<u64>,
+}
+
+impl Wake {
+    fn new(turn: &Value) -> Result<Self, Box<dyn Error>> {
+        let mut wake = Self {
+            origin: Instant::now(),
+            initial_clock: 0,
+            clock: 0,
+            due: None,
+        };
+        wake.observe(turn)?;
+        wake.initial_clock = wake.clock;
+        Ok(wake)
+    }
+
+    fn observe(&mut self, turn: &Value) -> Result<(), Box<dyn Error>> {
+        self.clock = turn["clock"].as_u64().ok_or("script answer has no clock")?;
+        self.due = match turn.get("nextWake") {
+            Some(Value::Null) => None,
+            Some(value) => Some(value.as_u64().ok_or("invalid script wake time")?),
+            None => return Err("script answer has no wake time".into()),
+        };
+        Ok(())
+    }
+
+    fn elapsed(&self) -> u64 {
+        self.initial_clock
+            .saturating_add(u64::try_from(self.origin.elapsed().as_millis()).unwrap_or(u64::MAX))
+    }
+
+    fn wait(&self) -> Duration {
+        let wait = self
+            .due
+            .map_or(250, |due| due.saturating_sub(self.elapsed()).min(250));
+        Duration::from_millis(wait)
+    }
+
+    fn advance(
+        &mut self,
+        page: &mut Session<'_>,
+        session: &Value,
+        size: [u32; 2],
+    ) -> Result<Option<Value>, Box<dyn Error>> {
+        let elapsed = self.elapsed();
+        if !self.due.is_some_and(|due| elapsed >= due) {
+            return Ok(None);
+        }
+        let turn = page.call(
+            "",
+            &json!({
+                "op":"scriptSession","action":"advance","session":session,
+                "ms":elapsed.saturating_sub(self.clock)
+            }),
+            size,
+        )?;
+        check_turn(&turn)?;
+        self.observe(&turn)?;
+        Ok(Some(turn))
+    }
+}
+
+fn check_timer(engine: &Engine) -> Result<(), Box<dyn Error>> {
+    let mut page = engine.session()?;
+    let start = start_document(
+        &mut page,
+        "<!doctype html><script>setTimeout(() => console.log('timer fired'), 20);</script>",
+        SIZE,
+    )?;
+    let mut wake = Wake::new(&start)?;
+    if wake.due.is_none() || start["logs"] != json!([]) {
+        return Err("engine did not schedule the fixture timer".into());
+    }
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        std::thread::sleep(wake.wait());
+        if let Some(turn) = wake.advance(&mut page, &start["session"], SIZE)? {
+            if turn["logs"] == json!(["timer fired"]) && wake.due.is_none() {
+                return Ok(());
+            }
+            return Err(format!("unexpected timer turn: {turn}").into());
+        }
+        if Instant::now() >= deadline {
+            return Err("engine timer did not become due".into());
+        }
+    }
+}
+
+fn check_audio(library: &Path) -> Result<(), Box<dyn Error>> {
+    if std::env::var("FOAFNAUT_AUDIO_SINK").as_deref() != Ok("null") {
+        return Err("run the audio smoke with FOAFNAUT_AUDIO_SINK=null".into());
+    }
+    const AUDIO_PAGE: &str = r#"<!doctype html>
+<style>body{margin:0} button{width:200px;height:80px}</style>
+<button id="go">Play</button>
+<script>
+const ctx = new AudioContext();
+document.getElementById('go').addEventListener('click', () => {
+  const tone = new OscillatorNode(ctx, {frequency: 440});
+  tone.connect(ctx.destination);
+  tone.onended = () => ctx.close().then(() => console.log('audio closed'));
+  tone.start();
+  tone.stop(ctx.currentTime + 0.10);
+  ctx.resume().then(() => console.log('audio running'));
+});
+</script>"#;
+    let engine = Engine::open(library)?;
+    let mut page = engine.session()?;
+    let start = start_document(&mut page, AUDIO_PAGE, SIZE)?;
+    let mut wake = Wake::new(&start)?;
+    if wake.due.is_some() {
+        return Err("audio scheduled a wake before activation".into());
+    }
+    let target = page.call(
+        AUDIO_PAGE,
+        &json!({
+            "op":"nodeAt","url":URL,"commands":start["commands"],"x":30,"y":30
+        }),
+        SIZE,
+    )?;
+    let node = target["node"]
+        .as_u64()
+        .ok_or("engine found no audio button")?;
+    let click = page.call(
+        "",
+        &json!({
+            "op":"scriptSession","action":"click","session":start["session"],"node":node
+        }),
+        SIZE,
+    )?;
+    check_turn(&click)?;
+    wake.observe(&click)?;
+
+    let mut samples_taken = false;
+    let mut running = false;
+    let mut turn = click;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let audio = page.call("", &json!({"op":"audioRuns"}), SIZE)?;
+        let items = audio["items"]
+            .as_array()
+            .ok_or("engine returned no audio runs")?;
+        samples_taken |= items
+            .iter()
+            .any(|item| item["read"].as_u64().unwrap_or(0) > 0);
+        let logs = turn["logs"].as_array().ok_or("script answer has no logs")?;
+        running |= logs.iter().any(|line| line == "audio running");
+        if logs.iter().any(|line| line == "audio closed") {
+            if running && samples_taken {
+                println!(
+                    "{}",
+                    json!({"audioSink":"null","activated":true,"consumedFrames":true,"closed":true})
+                );
+                return Ok(());
+            }
+            return Err("the audio closed without reporting running and delivering frames".into());
+        }
+        std::thread::sleep(wake.wait());
+        if let Some(next) = wake.advance(&mut page, &start["session"], SIZE)? {
+            turn = next;
+        }
+    }
+    Err(format!("audio smoke timed out after turn {turn}").into())
 }
 
 fn frame_at(
@@ -126,10 +305,11 @@ fn smoke(library: &Path) -> Result<(), Box<dyn Error>> {
         return Err("the second session produced a different first click".into());
     }
 
+    check_timer(&engine)?;
     println!(
         "{}",
         json!({
-            "engine":"bubblepop","sessions":2,"clickChangedScene":true,
+            "engine":"bubblepop","sessions":2,"clickChangedScene":true,"timerFired":true,
             "secondSessionUnchanged":true,"firstSceneMs":first_frame_ms
         })
     );
@@ -202,6 +382,7 @@ fn show_fixture(library: &Path, window_library: &Path) -> Result<(), Box<dyn Err
     }
     let start = start(&mut page, size)?;
     let session = &start["session"];
+    let mut wake = Wake::new(&start)?;
     let mut commands = start["commands"].clone();
     let mut dirty = true;
     let mut down = false;
@@ -213,7 +394,7 @@ fn show_fixture(library: &Path, window_library: &Path) -> Result<(), Box<dyn Err
             gpu.present(&engine, scene)?;
             dirty = false;
         }
-        window.wait_and_pump();
+        window.wait_and_pump(wake.wait());
         while let Some(event) = window.next() {
             if event.kind == 6 {
                 return Ok(());
@@ -231,6 +412,7 @@ fn show_fixture(library: &Path, window_library: &Path) -> Result<(), Box<dyn Err
                         size,
                     )?;
                     check_turn(&resize)?;
+                    wake.observe(&resize)?;
                     if let Some(updated) = resize.get("commands") {
                         commands = updated.clone();
                     }
@@ -284,16 +466,23 @@ fn show_fixture(library: &Path, window_library: &Path) -> Result<(), Box<dyn Err
             }
             let turn = page.call("", &request, size)?;
             check_turn(&turn)?;
+            wake.observe(&turn)?;
             if let Some(updated) = turn.get("commands") {
                 commands = updated.clone();
                 dirty = true;
             }
         }
+        if let Some(turn) = wake.advance(&mut page, session, size)?
+            && let Some(updated) = turn.get("commands")
+        {
+            commands = updated.clone();
+            dirty = true;
+        }
     }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    const USAGE: &str = "Usage: foafnaut-native-desktop LIBWEB_RENDER [--check-render-plan | --window LIBNATIVE_WINDOW]";
+    const USAGE: &str = "Usage: foafnaut-native-desktop LIBWEB_RENDER [--check-render-plan | --check-audio | --window LIBNATIVE_WINDOW]";
     let mut args = std::env::args_os().skip(1);
     let library = args.next().ok_or(USAGE)?;
     match (args.next().as_deref(), args.next(), args.next()) {
@@ -301,6 +490,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         (Some(flag), None, None) if flag == "--check-render-plan" => {
             check_render_plan(Path::new(&library))
         }
+        (Some(flag), None, None) if flag == "--check-audio" => check_audio(Path::new(&library)),
         (Some(flag), Some(window), None) if flag == "--window" => {
             show_fixture(Path::new(&library), Path::new(&window))
         }

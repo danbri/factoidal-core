@@ -53,3 +53,18 @@ The Linux window check uses an isolated Xvfb display and sends a real X11 pointe
 labs/demos/foafnaut/native-desktop/smoke-linux-window.sh \
   /path/to/foafnaut-native-desktop /path/to/libweb-render.so /path/to/libnative-window.so
 ```
+
+## Timers and the audio wake path
+
+The native event loop uses the engine's `clock` and `nextWake` from every script
+turn. It waits for a window event or the requested wake, then supplies elapsed
+monotonic time through `scriptSession advance`. Lean chooses which callbacks run,
+including the turns that bring audio output events back to the page. The headless
+smoke covers a real BubblePopJS timer using the same wake implementation.
+
+To exercise real-time audio without opening an audible device, use
+`FOAFNAUT_AUDIO_SINK=null` and pass `--check-audio` to the host. The test sends a
+trusted click to the fixture, lets the engine render a tone and checks that the
+sink consumed frames and the page observed the context close. The sink and
+autoplay policy are the existing engine implementation. The smoke does not
+measure waveform fidelity or exercise a physical audio device.
