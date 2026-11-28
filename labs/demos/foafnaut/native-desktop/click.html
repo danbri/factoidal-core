@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Foafnaut native host click fixture</title>
+<style>
+  body { margin: 0; }
+  button { display: block; width: 200px; height: 80px; }
+  #swatch { width: 120px; height: 100px; background-color: #b03030; }
+</style>
+<button id="go">Change colour</button>
+<div id="swatch"></div>
+<script>
+  let clicks = 0;
+  document.getElementById('go').addEventListener('click', () => {
+    console.log('click ' + ++clicks);
+    document.getElementById('swatch').style.backgroundColor = '#2050a0';
+  });
+</script>

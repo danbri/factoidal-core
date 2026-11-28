@@ -1,0 +1,55 @@
+name: Foafnaut native desktop smoke
+
+on:
+  pull_request:
+    paths:
+      - 'labs/demos/foafnaut/native-desktop/**'
+      - '.github/workflows/check-foafnaut-native-desktop.yml'
+  push:
+    branches: [wip/1233-native-desktop]
+    paths:
+      - 'labs/demos/foafnaut/native-desktop/**'
+      - '.github/workflows/check-foafnaut-native-desktop.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Native engine sessions on ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            bundle: foafnaut-linux-x86_64
+            digest: c243cea2a0665429e7f5234a088e7d0de22445c20282fc82cf5a4d24b8cd4caf
+            library: libweb-render.so
+          - runner: macos-15
+            bundle: foafnaut-darwin-arm64
+            digest: 9be6b2f28947830f39ace30cf2283b4fdec0b8b4d3a17a132a0431e21851348a
+            library: libweb-render.dylib
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the pinned 0.38.1 release
+        env:
+          BUNDLE: ${{ matrix.bundle }}
+          DIGEST: ${{ matrix.digest }}
+        run: |
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/engine.tar.gz" \
+            "https://github.com/danbri/factoidal-builds/releases/download/build-bd0d78dd12ff-$BUNDLE/$BUNDLE.tar.gz"
+          printf '%s  %s\n' "$DIGEST" "$RUNNER_TEMP/engine.tar.gz" | shasum -a 256 -c
+          mkdir "$RUNNER_TEMP/engine"
+          tar -xzf "$RUNNER_TEMP/engine.tar.gz" -C "$RUNNER_TEMP/engine"
+      - name: Check the click and session isolation with the released library
+        working-directory: labs/demos/foafnaut/native-desktop
+        env:
+          LIBRARY: ${{ matrix.library }}
+        run: |
+          library="$(find "$RUNNER_TEMP/engine" -type f -name "$LIBRARY" -print -quit)"
+          test -n "$library"
+          cargo fmt --check
+          cargo clippy --locked -- -D warnings
+          cargo run --locked --release -- "$library"
