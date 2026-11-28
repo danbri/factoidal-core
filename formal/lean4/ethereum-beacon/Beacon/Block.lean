@@ -7,7 +7,7 @@ import Beacon.Epoch
 assertion of the specification is `Except.error` with a reason; the state
 is then discarded by the caller. The execution engine is not linked: the
 payload's header-level checks are made here and the engine's verdict is an
-input (`Ctx.executionValid`).
+explicit test-fixture input (`Ctx.fixtureExecutionVerdict`); absence refuses.
 -/
 
 namespace Beacon
@@ -103,23 +103,26 @@ def transactionsCodec : Codec (Array ByteArray) :=
 def withdrawalsCodec : Codec (Array Withdrawal) :=
   Codec.list Withdrawal.codec (fun p => p.maxWithdrawalsPerPayload)
 
-def processExecutionPayload (c : Ctx) (s : BeaconState) (body : BeaconBlockBody) : Except String BeaconState := do
-  let p := c.p
-  let payload := body.executionPayload
-  ensure (payload.parentHash == s.latestExecutionPayloadHeader.blockHash) "execution payload: parent hash mismatch"
-  ensure (payload.prevRandao == randaoMix p s (currentEpoch p s)) "execution payload: prev_randao mismatch"
-  ensure (payload.timestamp == s.genesisTime + s.slot * p.secondsPerSlot) "execution payload: timestamp mismatch"
-  ensure (body.blobKzgCommitments.size ≤ maxBlobsPerBlock p (currentEpoch p s))
-    "execution payload: too many blob commitments"
-  ensure c.executionValid "execution payload: rejected by the execution engine"
-  return { s with latestExecutionPayloadHeader :=
-    { parentHash := payload.parentHash, feeRecipient := payload.feeRecipient, stateRoot := payload.stateRoot,
-      receiptsRoot := payload.receiptsRoot, logsBloom := payload.logsBloom, prevRandao := payload.prevRandao,
-      blockNumber := payload.blockNumber, gasLimit := payload.gasLimit, gasUsed := payload.gasUsed,
-      timestamp := payload.timestamp, extraData := payload.extraData, baseFeePerGas := payload.baseFeePerGas,
-      blockHash := payload.blockHash, transactionsRoot := transactionsCodec.root p payload.transactions,
-      withdrawalsRoot := withdrawalsCodec.root p payload.withdrawals, blobGasUsed := payload.blobGasUsed,
-      excessBlobGas := payload.excessBlobGas } }
+def processExecutionPayload (c : Ctx) (s : BeaconState) (body : BeaconBlockBody) : Except String BeaconState :=
+  match c.fixtureExecutionVerdict with
+  | none => .error "execution payload: execution verdict unavailable"
+  | some valid => do
+    let p := c.p
+    let payload := body.executionPayload
+    ensure (payload.parentHash == s.latestExecutionPayloadHeader.blockHash) "execution payload: parent hash mismatch"
+    ensure (payload.prevRandao == randaoMix p s (currentEpoch p s)) "execution payload: prev_randao mismatch"
+    ensure (payload.timestamp == s.genesisTime + s.slot * p.secondsPerSlot) "execution payload: timestamp mismatch"
+    ensure (body.blobKzgCommitments.size ≤ maxBlobsPerBlock p (currentEpoch p s))
+      "execution payload: too many blob commitments"
+    ensure valid "execution payload: rejected by the execution engine"
+    return { s with latestExecutionPayloadHeader :=
+      { parentHash := payload.parentHash, feeRecipient := payload.feeRecipient, stateRoot := payload.stateRoot,
+        receiptsRoot := payload.receiptsRoot, logsBloom := payload.logsBloom, prevRandao := payload.prevRandao,
+        blockNumber := payload.blockNumber, gasLimit := payload.gasLimit, gasUsed := payload.gasUsed,
+        timestamp := payload.timestamp, extraData := payload.extraData, baseFeePerGas := payload.baseFeePerGas,
+        blockHash := payload.blockHash, transactionsRoot := transactionsCodec.root p payload.transactions,
+        withdrawalsRoot := withdrawalsCodec.root p payload.withdrawals, blobGasUsed := payload.blobGasUsed,
+        excessBlobGas := payload.excessBlobGas } }
 
 /-! ## RANDAO and eth1 data -/
 
