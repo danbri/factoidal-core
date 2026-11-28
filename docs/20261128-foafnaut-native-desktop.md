@@ -33,3 +33,38 @@ cargo run --locked --release --manifest-path labs/demos/foafnaut/native-desktop/
 ```
 
 The Rust probe only forwards facts, parses the answer and asserts the expected contract for its fixed fixture. The presentation adapter will dispatch the plan's operations to the GPU and surface.
+
+## Presenting the fixture
+
+The Rust window adapter opens the existing AppKit or SDL bridge and creates a `wgpu` surface from its native handles. It passes the acquired device's capabilities to `web_render_plan`, uploads the engine's two scene byte streams and dispatches the resulting GPU commands. It checks that the answer corresponds to the scene and stops on an unsupported descriptor. The tile binding follows the existing `lean-svg-v1` shader ABI.
+
+For a matching engine build with `web_render_plan` and its native window library:
+
+```sh
+cargo run --locked --release --manifest-path labs/demos/foafnaut/native-desktop/Cargo.toml -- \
+  /path/to/libweb-render.dylib --window /path/to/libnative-window.dylib
+```
+
+Use the corresponding `.so` libraries on Linux. The fixture opens with a red swatch. Press and release the button to change it to blue. Native pointer coordinates go through Lean's `nodeAt` and `scriptSession` operations before the host requests a new scene. Window resize sends a viewport update to the same engine session. The window mode uses one local fixture. Real network transport, touch, audio, general page scheduling and paired timing measurements remain in issue #1233.
+
+The Linux window check uses an isolated Xvfb display and sends a real X11 pointer click. It samples the displayed swatch before and after the click through the X server. It needs `xvfb-run`, `xdotool`, ImageMagick's `import` and a Vulkan driver, such as Mesa's software Vulkan driver on CI:
+
+```sh
+labs/demos/foafnaut/native-desktop/smoke-linux-window.sh \
+  /path/to/foafnaut-native-desktop /path/to/libweb-render.so /path/to/libnative-window.so
+```
+
+## Timers and the audio wake path
+
+The native event loop uses the engine's `clock` and `nextWake` from every script
+turn. It waits for a window event or the requested wake, then supplies elapsed
+monotonic time through `scriptSession advance`. Lean chooses which callbacks run,
+including the turns that bring audio output events back to the page. The headless
+smoke covers a real BubblePopJS timer using the same wake implementation.
+
+To exercise real-time audio without opening an audible device, use
+`FOAFNAUT_AUDIO_SINK=null` and pass `--check-audio` to the host. The test sends a
+trusted click to the fixture, lets the engine render a tone and checks that the
+sink consumed frames and the page observed the context close. The sink and
+autoplay policy are the existing engine implementation. The smoke does not
+measure waveform fidelity or exercise a physical audio device.

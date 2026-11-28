@@ -30,10 +30,10 @@ pub struct DeviceLimits {
     pub buffer_bytes: u32,
 }
 
-struct Library(NonNull<c_void>);
+pub(crate) struct Library(NonNull<c_void>);
 
 impl Library {
-    fn open(path: &Path) -> Result<Self> {
+    pub(crate) fn open(path: &Path) -> Result<Self> {
         let path = CString::new(path.as_os_str().as_bytes())?;
         // SAFETY: the path is NUL-terminated and the handle is owned by Library.
         // The Lean task pool lives for the process. Closing our handle must not
@@ -43,7 +43,7 @@ impl Library {
         NonNull::new(handle).map(Self).ok_or_else(loader_error)
     }
 
-    fn symbol(&self, name: &CStr) -> Result<NonNull<c_void>> {
+    pub(crate) fn symbol(&self, name: &CStr) -> Result<NonNull<c_void>> {
         // SAFETY: the open library handle and symbol name remain valid for the call.
         let address = unsafe { libc::dlsym(self.0.as_ptr(), name.as_ptr()) };
         NonNull::new(address).ok_or_else(loader_error)

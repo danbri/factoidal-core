@@ -53,3 +53,4 @@ jobs:
           cargo fmt --check
           cargo clippy --locked -- -D warnings
           cargo run --locked --release -- "$library"
+          FOAFNAUT_AUDIO_SINK=null cargo run --locked --release -- "$library" --check-audio
