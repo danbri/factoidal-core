@@ -12,15 +12,19 @@ open EVMCleanroom.CLI (hexBytes)
 private def proofNodes (value : Json) : Except String (Array (Array UInt8)) := do
   let nodes ← value.getArr?
   if nodes.size > WitnessAdmission.maxWitnessNodes then throw "too many proof nodes"
-  nodes.mapM fun node => EVMCleanroom.CLI.parseBytecode (← node.getStr?)
+  nodes.mapM fun node => do
+    EVMCleanroom.CLI.parseBytecode (← node.getStr?)
 
 private def slot (value : Json) : Except String WitnessAdmission.StorageInput := do
-  return { key := ← decimalField value "key",
+  return {
+    key := ← decimalField value "key"
     proof := ← proofNodes (← value.getObjVal? "proof") }
 
 private def account (value : Json) : Except String WitnessAdmission.AccountInput := do
-  return { address := ← decimalField value "address", code := ← hexField value "codeHex",
-    accountProof := ← proofNodes (← value.getObjVal? "accountProof"),
+  return {
+    address := ← decimalField value "address"
+    code := ← hexField value "codeHex"
+    accountProof := ← proofNodes (← value.getObjVal? "accountProof")
     storage := ← (← arrayField value "storage" CallTransaction.maxKeysPerAccount).mapM slot }
 
 private def rawEntry (value : Json) : Except String SignedTransaction.RawEntry := do
@@ -60,7 +64,8 @@ private def checked (a : Keccak.Acceptance) (c : SecpRecovery.Acceptance) (value
 private def rootOnly (a : Keccak.Acceptance) (value : Json) : Except String Json := do
   let rows ← value.getArr?
   if rows.size > TransactionList.maxTransactions then return failJSON .resourceLimit
-  let raw ← rows.mapM fun row => EVMCleanroom.CLI.parseBytecode (← row.getStr?)
+  let raw ← rows.mapM fun row => do
+    EVMCleanroom.CLI.parseBytecode (← row.getStr?)
   match OrderedCommitments.root a raw.toList with
   | .ok root => return Json.mkObj [("status", .str "root"), ("root", .str (hexBytes root))]
   | .error e => return failJSON e
