@@ -7,7 +7,8 @@ when a handler is missing, its case count differs from the baseline (cases
 may not silently disappear), its pass count is lower, or its fail or
 unsupported count is higher, or fewer cases ran in signature-verification mode.
 Reject duplicate handlers, inconsistent count partitions, wrong fork metadata
-and BLS class drift. The signatures_checked field is a case-mode flag, not
+and BLS class drift. Require exact reviewed execution-payload control counts.
+The signatures_checked field is a case-mode flag, not
 a count of actual cryptographic calls.
 `--update` rewrites the baseline entry from the run (only ever done by hand,
 in a commit that says why).
@@ -75,6 +76,8 @@ def summarise(run):
         counts = {k: h[k] for k in KEYS}
         validate_counts(name, counts)
         validate_payload_coverage(name, h)
+        if name == "operations/execution_payload":
+            counts.update({k: h[k] for k in PAYLOAD_KEYS})
         current[name] = counts
     if not current:
         raise ValueError("empty handler inventory")
@@ -106,6 +109,15 @@ def compare(current, baseline):
             continue
         validate_counts(name, want)
         validate_counts(name, got)
+        if name == "operations/execution_payload":
+            if any(k not in want or k not in got for k in PAYLOAD_KEYS):
+                problems.append(f"{name}: missing pinned payload control partition")
+            else:
+                validate_payload_coverage(name, want)
+                validate_payload_coverage(name, got)
+                for key in PAYLOAD_KEYS:
+                    if got[key] != want[key]:
+                        problems.append(f"{name}: {key} differs from baseline")
         if got["total"] != want["total"]:
             problems.append(f'{name}: {got["total"]} cases, baseline has {want["total"]}')
         if got["pass"] < want["pass"]:
@@ -199,6 +211,28 @@ def self_test():
         controls += 1
     else:
         raise AssertionError("missing payload control evidence accepted")
+    # Pin the exact reviewed partition, not merely a positive count.
+    name = "operations/execution_payload"
+    full = dict.fromkeys(KEYS, 0) | dict.fromkeys(PAYLOAD_KEYS, 0) | {
+        "runner": "operations", "handler": "execution_payload", "total": 40,
+        "pass": 40, "bls_optional": 40, "bls_optional_pass": 40,
+        "signatures_checked": 40, "payload_control_passed": 40}
+    pinned = summarise(run | {"handlers": [full]})
+    assert compare(pinned, pinned) == []
+    for passed in range(1, 40):
+        drift = full | {"payload_control_passed": passed,
+                        "payload_decode_refused": 40 - passed}
+        actual = summarise(run | {"handlers": [drift]})
+        assert compare(actual, pinned), passed
+        # A deliberately reviewed corpus can legitimately contain decode refusals.
+        assert compare(actual, actual) == []
+        controls += 1
+    for key in PAYLOAD_KEYS:
+        missing_pin = copy.deepcopy(pinned)
+        del missing_pin[name][key]
+        assert compare(pinned, missing_pin)
+        assert compare(missing_pin, pinned)
+        controls += 2
     print(f"ratchet self-test: {controls} negative controls behaved")
 
 def main():
