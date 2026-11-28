@@ -296,6 +296,10 @@
     "bls_required_pass": 0,
     "fail": 0,
     "pass": 40,
+    "payload_control_failed": 0,
+    "payload_control_not_reached": 0,
+    "payload_control_passed": 40,
+    "payload_decode_refused": 0,
     "signatures_checked": 40,
     "total": 40,
     "unsupported": 0
@@ -1520,6 +1524,10 @@
     "bls_required_pass": 0,
     "fail": 0,
     "pass": 40,
+    "payload_control_failed": 0,
+    "payload_control_not_reached": 0,
+    "payload_control_passed": 40,
+    "payload_decode_refused": 0,
     "signatures_checked": 40,
     "total": 40,
     "unsupported": 0
