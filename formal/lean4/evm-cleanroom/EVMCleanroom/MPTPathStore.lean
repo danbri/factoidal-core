@@ -12,7 +12,7 @@ structure Store (a : Keccak.Acceptance) where
   db : MPT.Database a
 
 def valid (s : Store a) : Bool :=
-  s.db.length <= maxStoreNodes && s.db.all (fun node => node.bytes.size <= MPT.maxNodeBytes)
+  decide (s.db.length ≤ maxStoreNodes) && s.db.all (fun node => decide (node.bytes.size ≤ MPT.maxNodeBytes))
 
 def admit (a : Keccak.Acceptance) (nodes : Array (Array UInt8)) :
     Except MPT.Error (Store a) :=
@@ -22,7 +22,8 @@ def admit (a : Keccak.Acceptance) (nodes : Array (Array UInt8)) :
 
 def extend (a : Keccak.Acceptance) (s : Store a) (nodes : Array (Array UInt8)) :
     Except MPT.Error (Store a) :=
-  if !valid s || s.db.length + nodes.size > maxStoreNodes then .error .resourceLimit
+  if s.db.length + nodes.size > maxStoreNodes then .error .resourceLimit
+  else if !valid s then .error .resourceLimit
   else if nodes.any (fun node => node.size > MPT.maxNodeBytes) then .error .resourceLimit
   else .ok { db := MPT.indexProof a nodes ++ s.db }
 
@@ -82,6 +83,15 @@ theorem admit_oversized (a : Keccak.Acceptance) (nodes : Array (Array UInt8))
     (h : nodes.size > maxStoreNodes) : admit a nodes = .error .resourceLimit := by
   simp only [admit, if_pos h]
 
+/-- Kind: aggregate resource refusal.
+Says: extension beyond the aggregate node capacity refuses before hashing new nodes.
+Does not say: all host allocation or all resource use is bounded by this theorem. -/
+theorem extend_oversized (a : Keccak.Acceptance) (s : Store a) (nodes : Array (Array UInt8))
+    (h : s.db.length + nodes.size > maxStoreNodes) :
+    extend a s nodes = .error .resourceLimit := by
+  simp only [extend, if_pos h]
+
+#print axioms extend_oversized
 #print axioms select_checked
 #print axioms collect_zero
 #print axioms admit_oversized
