@@ -26,9 +26,10 @@ structure Ctx where
       signature checks, aggregate public keys are the reference test
       suite's fixed stub value. Never set outside those vectors. -/
   blsOff : Bool := false
-  /-- The execution engine's verdict on the payload. The engine link is
-      outside this module; the vectors supply the verdict. -/
-  executionValid : Bool := true
+  /-- Test-only execution verdict supplied explicitly by the official vector
+      harness. Absence means execution has not been established. This field
+      is not an independent execution-engine result. -/
+  fixtureExecutionVerdict : Option Bool := none
 
 def uint64Max : Nat := 18446744073709551615
 

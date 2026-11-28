@@ -195,7 +195,10 @@ def transitionCase (o : Options) (dir : System.FilePath) (timer : IO.Ref Nat) (e
         if s.inRange then .ok s else .error "a uint64 field left its range"
   timer.set (((← IO.monoNanosNow) - t0) / 1000 + 1)
   match outcome, post with
-  | .error _, none => return (.pass, "", bls, verify)
+  | .error e, none =>
+    if e == "execution payload: execution verdict unavailable" || e == "fixture boundary control failed" then
+      return (.fail, e, bls, verify)
+    else return (.pass, "", bls, verify)
   | .ok _, none => return (.fail, "accepted an input the vector marks invalid", bls, verify)
   | .error e, some _ => return (.fail, s!"refused a valid input: {e}", bls, verify)
   | .ok s, some expected =>
@@ -255,9 +258,16 @@ def operationCase (o : Options) (handler : String) : Option CaseFn :=
   | "withdrawals" => simple ExecutionPayload.codec "execution_payload.ssz_snappy"
       fun c s payload => processWithdrawals c.p s payload
   | "execution_payload" => some fun dir timer => do
-      let valid := (yamlBool (← readText (dir / "execution.yaml")) "execution_valid").getD true
-      transitionCase o dir timer (fun c => { c with executionValid := valid })
-        (withOp BeaconBlockBody.codec p (dir / "body.ssz_snappy") processExecutionPayload)
+      let some valid := parseExecutionVerdict (← readText (dir / "execution.yaml"))
+        | throw (IO.userError "missing or malformed execution.yaml verdict")
+      transitionCase o dir timer (fun c => { c with fixtureExecutionVerdict := some valid })
+        (withOp BeaconBlockBody.codec p (dir / "body.ssz_snappy") fun c s body =>
+          -- Negative control on the same decoded input, including invalid vectors.
+          match processExecutionPayload { c with fixtureExecutionVerdict := none } s body with
+          | .error e =>
+            if e == "execution payload: execution verdict unavailable" then processExecutionPayload c s body
+            else .error "fixture boundary control failed"
+          | .ok _ => .error "fixture boundary control failed")
   | _ => none
 
 def sanityCase (o : Options) (handler : String) : Option CaseFn :=
@@ -273,7 +283,9 @@ def sanityCase (o : Options) (handler : String) : Option CaseFn :=
       let mut raw : Array ByteArray := #[]
       for i in [0:n] do
         raw := raw.push (← readSnappy (dir / s!"blocks_{i}.ssz_snappy"))
-      transitionCase o dir timer id (pure (.ok fun c s =>
+      -- The official block vectors do not run the independent EL.
+      transitionCase o dir timer (fun c => { c with fixtureExecutionVerdict := some true })
+        (pure (.ok fun c s =>
         raw.foldlM (fun s bytes =>
           match SignedBeaconBlock.codec.decode p bytes with
           | .ok block => stateTransition c s block
