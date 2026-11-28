@@ -5,6 +5,13 @@ namespace EVMCleanroom.MPTPathStoreProbe
 
 open CLI (parseBytecode hexBytes)
 
+def readInput (root key : String) (proof : List String) :
+    Except String (Array UInt8 × Array UInt8 × Array (Array UInt8)) := do
+  let r ← parseBytecode root
+  let k ← parseBytecode key
+  let nodes ← proof.mapM parseBytecode
+  return (r,k,nodes.toArray)
+
 def run (args : List String) : IO UInt32 := do
   match args with
   | "--dangerously-enable-unverified-keccak" :: root :: key :: proof =>
@@ -15,17 +22,14 @@ def run (args : List String) : IO UInt32 := do
     if root.length != 64 || key.length != 64 then
       IO.println "witness:root-or-key-width"
       return 0
-    match (do
-      let r ← parseBytecode root
-      let k ← parseBytecode key
-      let nodes ← proof.mapM parseBytecode
-      pure (r,k,nodes.toArray) : Except String (Array UInt8 × Array UInt8 × Array (Array UInt8))) with
+    match readInput root key proof with
     | .error why => IO.println ("inputError:" ++ why); return 2
     | .ok (r,k,nodes) =>
       let a := Keccak.dangerouslyAcceptUnverified
-      let result := do
-        let s ← MPTPathStore.admit a #[]
-        let s ← MPTPathStore.extend a s nodes
+      let result : Except MPT.Error (MPTPathStore.Selected a r k) := do
+        let mid := nodes.size / 2
+        let s ← MPTPathStore.admit a (nodes.extract 0 mid)
+        let s ← MPTPathStore.extend a s (nodes.extract mid nodes.size)
         MPTPathStore.select a s r k
       match result with
       | .error .resourceLimit => IO.println "resourceLimit"; return 0
