@@ -33,3 +33,16 @@ cargo run --locked --release --manifest-path labs/demos/foafnaut/native-desktop/
 ```
 
 The Rust probe only forwards facts, parses the answer and asserts the expected contract for its fixed fixture. The presentation adapter will dispatch the plan's operations to the GPU and surface.
+
+## Presenting the fixture
+
+The Rust window adapter opens the existing AppKit or SDL bridge and creates a `wgpu` surface from its native handles. It passes the acquired device's capabilities to `web_render_plan`, uploads the engine's two scene byte streams and dispatches the resulting GPU commands. It checks that the answer corresponds to the scene and stops on an unsupported descriptor. The tile binding follows the existing `lean-svg-v1` shader ABI.
+
+For a matching engine build with `web_render_plan` and its native window library:
+
+```sh
+cargo run --locked --release --manifest-path labs/demos/foafnaut/native-desktop/Cargo.toml -- \
+  /path/to/libweb-render.dylib --window /path/to/libnative-window.dylib
+```
+
+Use the corresponding `.so` libraries on Linux. The fixture opens with a red swatch. Press and release the button to change it to blue. Native pointer coordinates go through Lean's `nodeAt` and `scriptSession` operations before the host requests a new scene. Window resize sends a viewport update to the same engine session. The window mode uses one local fixture. Real network transport, touch, audio, general page scheduling and paired timing measurements remain in issue #1233.
