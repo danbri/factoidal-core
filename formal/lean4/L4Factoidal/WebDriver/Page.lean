@@ -25,6 +25,7 @@ Proved: `refNode_refString` (a reference of this document names its node again),
 Tested: `#guard`s below.
 -/
 import L4Factoidal.WebDriver.Protocol
+import L4Factoidal.WebDriver.Actions
 import L4Factoidal.WHATWG.URL.Parser
 
 namespace L4Factoidal.WebDriver.Page
@@ -149,6 +150,29 @@ def find (root : Json) (body : Json) (finish : Finish) : Step :=
     | some fn => .call fn (.array [.string value, root]) finish
     | none => .reply (.error (bad "unknown locator strategy"))
   | _, _ => .reply (.error (bad "using and value are required strings"))
+
+/-- Classic Perform and Release Actions share the engine's input action parser. -/
+def classicActions (command : Command) (body : Json) :
+    Option (Except Error (List Actions.Source × Bool)) :=
+  match command with
+  | .performActions => some ((Actions.parse body).map (·, false))
+  | .releaseActions => some (.ok ([], true))
+  | _ => none
+
+/-- Kind: property. Says: release never takes action sources from the request body.
+Does not say: which cancellation events the engine dispatches for held input state. -/
+theorem classicActions_release (body : Json) :
+    classicActions .releaseActions body = some (.ok ([], true)) := rfl
+
+/-- Kind: property. Says: a payload refused by the shared parser cannot dispatch input.
+Does not say: that a valid input sequence satisfies every runtime constraint. -/
+theorem classicActions_perform_refused (body : Json) (error : Error)
+    (h : Actions.parse body = .error error) :
+    classicActions .performActions body = some (.error error) := by
+  simp [classicActions, h, Except.map]
+
+#print axioms classicActions_release
+#print axioms classicActions_perform_refused
 
 /-- The step of a page command. `url`: the page's URL. -/
 def step (url : String) (c : Command) (params : List String) (body : Json) : Step :=

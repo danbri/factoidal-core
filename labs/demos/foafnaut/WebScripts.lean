@@ -1310,10 +1310,11 @@ Actions with `release`) over the engine (`PageEvents.inputDriver`): the one plac
 trusted input state changes. An event that gives user activation (`WebDriver.Input.activates`)
 records its time, and gives the page's Web Audio state its sticky activation
 (`WebAudio.Api.activate`: a context may start, and the `resume()` calls that waited go on). -/
-def performInput (sources : List WebDriver.Actions.Source) (release : Bool) (a : LeanJSWorkers.Agents) :
+def performInput (sources : List WebDriver.Actions.Source) (release : Bool) (a : LeanJSWorkers.Agents)
+    (resolve : DOM.Dom → String → Option Nat := refNode) :
     LeanJSWorkers.Agents :=
   let e := LeanJSWorkers.engine
-  let base := e.inputDriver refNode
+  let base := e.inputDriver resolve
   -- HTML §6.4.1: the activation notification comes before the event is dispatched, so the
   -- event's own listeners see the activation (a `resume()` in a pointerdown listener goes on).
   let dispatch := fun (a : LeanJSWorkers.Agents) (low : WebDriver.Actions.Low) =>
@@ -1572,7 +1573,7 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
     -- input of the user as WebDriver's Perform Actions; the one place the trusted input state changes
     match inputSources request with
     | .error er => run fun a => { a with page := a.page.setTrusted { a.page.trusted with error := some er } }
-    | .ok sources => run (performInput sources (boolField request "release"))
+    | .ok sources => run fun a => performInput sources (boolField request "release") a
   | "computed" =>
     -- WebDriver "Get Computed Role" and "Get Computed Label" for test_driver: the role or the
     -- accessible name of the element the page names (`refNode`; `HTML.AccessibleRole`), answered to the page as the reply to its
@@ -1755,6 +1756,24 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
           match result with
           | .ok v => (held, .ok (reply 200 (WebDriver.successBody v)))
           | .error e => (held, .ok (reply e.code.status e.body))
+        -- The HTTP endpoint's action source ids use the same trusted input path as test_driver.
+        if let some parsed := WebDriver.Page.classicActions command body then
+          match parsed, held.leanSession with
+          | .error e, _ => return answer held (.error e)
+          | .ok (_, true), none => return answer held (.ok .null)
+          | .ok (_, false), none =>
+            return answer held (.error { code := .noSuchWindow, message := "no page is loaded" })
+          | .ok (sources, release), some (id, s, marks) =>
+            let resolve := fun (d : DOM.Dom) (ref : String) =>
+              (WebDriver.Page.refNode doc.refPrefix ref).filter (· < d.size)
+            let a : LeanJSWorkers.Agents :=
+              { page := s, w := held.leanWorkers, base := held.leanBase, entropy := workerEntropyOf id entropy }
+            let a := performInput sources release a resolve
+            let result := match a.page.trusted.error with
+              | some e => .error e
+              | none => .ok .null
+            let held := { held with leanSession := some (id, inputReported a.page, marks), leanWorkers := a.w }
+            return answer held result
         -- the window's own commands (`WebDriver.Window`), then the page's (`WebDriver.Page`)
         match WebDriver.Window.answer window command body with
         | some (window, result) => return answer { held with webdriver := some (cfg, srv, browser, window, doc) } result
