@@ -46,3 +46,10 @@ cargo run --locked --release --manifest-path labs/demos/foafnaut/native-desktop/
 ```
 
 Use the corresponding `.so` libraries on Linux. The fixture opens with a red swatch. Press and release the button to change it to blue. Native pointer coordinates go through Lean's `nodeAt` and `scriptSession` operations before the host requests a new scene. Window resize sends a viewport update to the same engine session. The window mode uses one local fixture. Real network transport, touch, audio, general page scheduling and paired timing measurements remain in issue #1233.
+
+The Linux window check uses an isolated Xvfb display and sends a real X11 pointer click. It samples the displayed swatch before and after the click through the X server. It needs `xvfb-run`, `xdotool`, ImageMagick's `import` and a Vulkan driver, such as Mesa's software Vulkan driver on CI:
+
+```sh
+labs/demos/foafnaut/native-desktop/smoke-linux-window.sh \
+  /path/to/foafnaut-native-desktop /path/to/libweb-render.so /path/to/libnative-window.so
+```
