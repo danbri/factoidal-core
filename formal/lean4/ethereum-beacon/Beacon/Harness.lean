@@ -15,6 +15,11 @@ inductive Status where
   | pass | fail | unsupported
   deriving BEq, Repr
 
+/-- Test-only coverage of the missing execution verdict control. -/
+inductive PayloadControl where
+  | notReached | decodeRefused | passed | failed
+  deriving BEq
+
 structure CaseResult where
   name : String
   status : Status
@@ -24,6 +29,7 @@ structure CaseResult where
   /-- Whether signatures were really checked while running this case. -/
   blsVerified : Bool := false
   micros : Nat := 0
+  payloadControl : PayloadControl := .notReached
 
 def hexDigit (c : UInt8) : Option UInt8 :=
   if 48 ≤ c && c ≤ 57 then some (c - 48)
@@ -69,6 +75,46 @@ def yamlBool (text key : String) : Option Bool :=
     let word := String.ofList ((rest.toList.dropWhile (· == ' ')).takeWhile Char.isAlpha)
     if word == "true" then some true else if word == "false" then some false else none
   | _ => none
+
+/-- The pinned execution-payload vectors provide a single boolean mapping.
+    This is deliberately not a general YAML parser. Require the complete
+    mapping (block or flow form); never infer success from missing metadata,
+    a duplicate key, a prefix of a value or another key's suffix. -/
+def parseExecutionVerdict (text : String) : Option Bool :=
+  let trim (s : String) : String :=
+    String.ofList (((s.toList.dropWhile Char.isWhitespace).reverse.dropWhile Char.isWhitespace).reverse)
+  let parse (s : String) : Option Bool :=
+    match s.splitOn ":" with
+    | [key, value] =>
+      if trim key == "execution_valid" then
+        if trim value == "true" then some true
+        else if trim value == "false" then some false else none
+      else none
+    | _ => none
+  let s := trim text
+  match s.toList with
+  | '{' :: rest =>
+    match rest.reverse with
+    | '}' :: inside => parse (String.ofList inside.reverse)
+    | _ => none
+  | _ => parse s
+
+#guard parseExecutionVerdict "execution_valid: true\n" == some true
+#guard parseExecutionVerdict "execution_valid: false\r\n" == some false
+#guard parseExecutionVerdict "{ execution_valid: true }" == some true
+#guard parseExecutionVerdict "{execution_valid: false}" == some false
+#guard parseExecutionVerdict "" == none
+#guard parseExecutionVerdict "  \n" == none
+#guard parseExecutionVerdict "execution_valid: true1" == none
+#guard parseExecutionVerdict "execution_valid: true false" == none
+#guard parseExecutionVerdict "execution_valid: yes" == none
+#guard parseExecutionVerdict "execution_valid: 1" == none
+#guard parseExecutionVerdict "execution_valid: null" == none
+#guard parseExecutionVerdict "not_execution_valid: true" == none
+#guard parseExecutionVerdict "execution_valid: true\nexecution_valid: false" == none
+#guard parseExecutionVerdict "execution_valid: true\nother: false" == none
+#guard parseExecutionVerdict "{execution_valid: true" == none
+#guard parseExecutionVerdict "execution_valid: false}" == none
 
 def firstNat (text : String) : Option Nat :=
   let digits := (text.toList.dropWhile (fun c => !c.isDigit)).takeWhile Char.isDigit

@@ -116,9 +116,9 @@ def sszStaticCodec (p : Preset) (name : String) : Option (ByteArray → ByteArra
 /-- One case: returns status, detail and BLS class. A case may write the
     time of the transition alone (microseconds) to the reference; otherwise
     the whole case is timed. -/
-abbrev CaseFn := System.FilePath → IO.Ref Nat → IO (Status × String × Nat × Bool)
+abbrev CaseFn := System.FilePath → IO.Ref Nat → IO.Ref PayloadControl → IO (Status × String × Nat × Bool)
 
-def sszStaticCase (o : Options) (handler : String) : CaseFn := fun dir timer => do
+def sszStaticCase (o : Options) (handler : String) : CaseFn := fun dir timer _ => do
   match sszStaticCodec o.preset handler with
   | none => return (.unsupported, s!"container {handler} is not implemented", 0, false)
   | some check =>
@@ -177,7 +177,7 @@ abbrev Transition := Ctx → BeaconState → Except String BeaconState
 /-- Run `step` on `pre.ssz_snappy` and compare with `post.ssz_snappy`; a
     case without a post-state passes exactly when the step is refused. -/
 def transitionCase (o : Options) (dir : System.FilePath) (timer : IO.Ref Nat) (extraCtx : Ctx → Ctx)
-    (load : IO (Except String Transition)) : IO (Status × String × Nat × Bool) := do
+    (load : Ctx → BeaconState → IO (Except String Transition)) : IO (Status × String × Nat × Bool) := do
   let p := o.preset
   let metaText ← readText (dir / "meta.yaml")
   let bls := (yamlNat metaText "bls_setting").getD 0
@@ -187,7 +187,7 @@ def transitionCase (o : Options) (dir : System.FilePath) (timer : IO.Ref Nat) (e
     | .ok s => pure s
     | .error e => return (.fail, s!"pre-state does not decode: {e}", bls, verify)
   let post ← readOptional (dir / "post.ssz_snappy")
-  let loaded ← load
+  let loaded ← load c pre
   let t0 ← IO.monoNanosNow
   let outcome ← IO.lazyPure fun _ => match loaded with
     | .error e => Except.error s!"input does not decode: {e}"
@@ -195,7 +195,10 @@ def transitionCase (o : Options) (dir : System.FilePath) (timer : IO.Ref Nat) (e
         if s.inRange then .ok s else .error "a uint64 field left its range"
   timer.set (((← IO.monoNanosNow) - t0) / 1000 + 1)
   match outcome, post with
-  | .error _, none => return (.pass, "", bls, verify)
+  | .error e, none =>
+    if e == "execution payload: execution verdict unavailable" || e == "fixture boundary control failed" then
+      return (.fail, e, bls, verify)
+    else return (.pass, "", bls, verify)
   | .ok _, none => return (.fail, "accepted an input the vector marks invalid", bls, verify)
   | .error e, some _ => return (.fail, s!"refused a valid input: {e}", bls, verify)
   | .ok s, some expected =>
@@ -235,7 +238,7 @@ def operationCase (o : Options) (handler : String) : Option CaseFn :=
   let p := o.preset
   let simple {α : Type} (codec : Codec α) (file : String)
       (f : Ctx → BeaconState → α → Except String BeaconState) : Option CaseFn :=
-    some fun dir timer => transitionCase o dir timer id (withOp codec p (dir / file) f)
+    some fun dir timer _ => transitionCase o dir timer id (fun _ _ => withOp codec p (dir / file) f)
   match handler with
   | "attestation" => simple Attestation.codec "attestation.ssz_snappy" processAttestation
   | "attester_slashing" => simple AttesterSlashing.codec "attester_slashing.ssz_snappy" processAttesterSlashing
@@ -254,26 +257,46 @@ def operationCase (o : Options) (handler : String) : Option CaseFn :=
       fun c s r => .ok (processWithdrawalRequest c.p s r)
   | "withdrawals" => simple ExecutionPayload.codec "execution_payload.ssz_snappy"
       fun c s payload => processWithdrawals c.p s payload
-  | "execution_payload" => some fun dir timer => do
-      let valid := (yamlBool (← readText (dir / "execution.yaml")) "execution_valid").getD true
-      transitionCase o dir timer (fun c => { c with executionValid := valid })
-        (withOp BeaconBlockBody.codec p (dir / "body.ssz_snappy") processExecutionPayload)
+  | "execution_payload" => some fun dir timer coverage => do
+      let some valid := parseExecutionVerdict (← readText (dir / "execution.yaml"))
+        | throw (IO.userError "missing or malformed execution.yaml verdict")
+      transitionCase o dir timer (fun c => { c with fixtureExecutionVerdict := some valid })
+        (fun c s => do
+          -- Decode once. A decode refusal is not an executed control.
+          match BeaconBlockBody.codec.decode p (← readSnappy (dir / "body.ssz_snappy")) with
+          | .error e =>
+            coverage.set .decodeRefused
+            return .error e
+          | .ok body =>
+            -- Execute the control on exactly the body and pre-state used by the real step.
+            -- Keep the control outside the measured transition time.
+            let refused ← IO.lazyPure fun _ =>
+              match processExecutionPayload { c with fixtureExecutionVerdict := none } s body with
+              | .error e => e == "execution payload: execution verdict unavailable"
+              | .ok _ => false
+            if !refused then
+              coverage.set .failed
+              throw (IO.userError "fixture boundary control failed")
+            coverage.set .passed
+            return .ok fun c s => processExecutionPayload c s body)
   | _ => none
 
 def sanityCase (o : Options) (handler : String) : Option CaseFn :=
   let p := o.preset
   match handler with
-  | "slots" => some fun dir timer => do
+  | "slots" => some fun dir timer _ => do
       let some n := firstNat (← readText (dir / "slots.yaml"))
         | return (.fail, "slots.yaml has no slot count", 0, false)
-      transitionCase o dir timer id (pure (.ok fun c s => processSlots c s (s.slot + n)))
-  | "blocks" => some fun dir timer => do
+      transitionCase o dir timer id (fun _ _ => pure (.ok fun c s => processSlots c s (s.slot + n)))
+  | "blocks" => some fun dir timer _ => do
       let some n := yamlNat (← readText (dir / "meta.yaml")) "blocks_count"
         | return (.fail, "meta.yaml has no blocks_count", 0, false)
       let mut raw : Array ByteArray := #[]
       for i in [0:n] do
         raw := raw.push (← readSnappy (dir / s!"blocks_{i}.ssz_snappy"))
-      transitionCase o dir timer id (pure (.ok fun c s =>
+      -- The official block vectors do not run the independent EL.
+      transitionCase o dir timer (fun c => { c with fixtureExecutionVerdict := some true })
+        (fun _ _ => pure (.ok fun c s =>
         raw.foldlM (fun s bytes =>
           match SignedBeaconBlock.codec.decode p bytes with
           | .ok block => stateTransition c s block
@@ -282,7 +305,7 @@ def sanityCase (o : Options) (handler : String) : Option CaseFn :=
 
 /-- `rewards` vectors: the four delta sets of the pre-state, and agreement
     of the fused balance update with the delta form. -/
-def rewardsCase (o : Options) : CaseFn := fun dir timer => do
+def rewardsCase (o : Options) : CaseFn := fun dir timer _ => do
   let p := o.preset
   let s ← match BeaconState.codec.decode p (← readSnappy (dir / "pre.ssz_snappy")) with
     | .ok s => pure s
@@ -304,7 +327,7 @@ def rewardsCase (o : Options) : CaseFn := fun dir timer => do
 def caseFnFor (o : Options) (runner handler : String) : Option CaseFn :=
   match runner with
   | "ssz_static" => some (sszStaticCase o handler)
-  | "epoch_processing" => (epochStep handler).map fun step dir timer => transitionCase o dir timer id (pure (.ok step))
+  | "epoch_processing" => (epochStep handler).map fun step dir timer _ => transitionCase o dir timer id (fun _ _ => pure (.ok step))
   | "operations" => operationCase o handler
   | "sanity" => sanityCase o handler
   | "finality" => sanityCase o "blocks"
@@ -315,14 +338,16 @@ def caseFnFor (o : Options) (runner handler : String) : Option CaseFn :=
 def runCase (fn : CaseFn) (name : String) (dir : System.FilePath) : IO CaseResult := do
   let timer ← IO.mkRef 0
   let t0 ← IO.monoNanosNow
-  let outcome ← (fn dir timer).toBaseIO
+  let coverage ← IO.mkRef PayloadControl.notReached
+  let outcome ← (fn dir timer coverage).toBaseIO
+  let payloadControl ← coverage.get
   let t1 ← IO.monoNanosNow
   let own ← timer.get
   let micros := if own != 0 then own else (t1 - t0) / 1000
   match outcome with
   | .ok (status, detail, bls, verified) =>
-    return { name, status, detail, blsSetting := bls, blsVerified := verified, micros }
-  | .error e => return { name, status := .fail, detail := s!"harness error: {e}", micros }
+    return { name, status, detail, blsSetting := bls, blsVerified := verified, micros, payloadControl }
+  | .error e => return { name, status := .fail, detail := s!"harness error: {e}", micros, payloadControl }
 
 def runAll (o : Options) (fn : CaseFn) (cases : Array (String × System.FilePath)) : IO (Array CaseResult) := do
   if o.jobs ≤ 1 then
@@ -367,6 +392,8 @@ def HandlerSummary.json (h : HandlerSummary) : String :=
   s!",\"bls_off\":{count rs (·.blsSetting == 2)},\"bls_off_pass\":{count rs (fun r => r.blsSetting == 2 && r.status == .pass)}" ++
   s!",\"bls_optional\":{count rs (·.blsSetting == 0)},\"bls_optional_pass\":{count rs (fun r => r.blsSetting == 0 && r.status == .pass)}" ++
   s!",\"signatures_checked\":{count rs (·.blsVerified)}" ++
+  s!",\"payload_control_passed\":{count rs (·.payloadControl == .passed)},\"payload_control_failed\":{count rs (·.payloadControl == .failed)}" ++
+  s!",\"payload_decode_refused\":{count rs (·.payloadControl == .decodeRefused)},\"payload_control_not_reached\":{count rs (·.payloadControl == .notReached)}" ++
   s!",\"p50_us\":{percentile times 50},\"p95_us\":{percentile times 95},\"max_us\":{percentile times 100}" ++
   ",\"not_passing\":[" ++ ",".intercalate failures.toList ++ "]}"
 
