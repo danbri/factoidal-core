@@ -1,0 +1,7 @@
+# Ordered execution block bloom — 2026-11-28
+
+Follow-up to #1241 / #1219 / #725 / #652. The exact verified predecessor is 4ed30ee50d05aae08a1fb5f9f262a8774d988825; native job 140941322284 passed 30 executed lists, 327 signed occurrences, 6 prior refusals, 2 altered roots, 11 trie sizes, 2 shape/resource controls, 17 native audit controls and three actual axiom reports. Preserve it as the fallback candidate.
+
+The existing restricted runner checks header fields 4/5 and the gas totals, but not the content of the 256-byte logsBloom field 6. Use the same per-receipt bloom bytes inside the RLP receipt and in the block-wide OR, without repeating log hashing. Extend the dependent result with exact field 6 equality and add checked_bloom. The test-only independent BigInt bitset oracle builds the child field from retained reference logs, compares actual native output, and requires 20 zero and 10 nonzero bloom cases plus one altered field 6 in each class; keep every prior gate. Synthetic headers remain synthetic, not canonical-chain data.
+
+No new dependencies, no new runtime proof-assistant path. No local Lean or shared build dispatch. Fresh exact-head hosted compilation, four actual axiom reports, native controls and comparisons required before counting this candidate. No normative Keccak/MPT/receipt refinement, post-state commitment, full block or Fulu admission claim. No merge or release.
