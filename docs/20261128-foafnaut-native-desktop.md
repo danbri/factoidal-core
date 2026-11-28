@@ -16,6 +16,14 @@ The fixture starts in two separate engine sessions. The host asks for the fresh 
 
 The prototype reports milliseconds from before loading the library to the first scene answer. This includes JSON decoding and provides no display latency measurement. A comparable measurement needs a common rendering and presentation endpoint in both hosts.
 
+## Keeping decisions in Lean
+
+Review each host call against the engine operation it uses. For this fixture, `scriptPlan` chooses the engine, `nodeAt` finds the target, and `scriptSession` dispatches the click and emits DOM commands. Rust passes those commands back with the original fixture. Its comparisons of scene data, console messages and session state are smoke-test assertions. The fixed click coordinates and script count are fixture inputs.
+
+For the window path, Lean supplies the paint data, shaders, GPU descriptors and command order. Rust reports actual device capabilities, dispatches those commands and handles the surface and resource lifetimes. For transport, Rust returns bytes and connection facts and admits only operations that Lean requests. If the C interface lacks a decision, expose the existing Lean operation or implement and test the decision in Lean. A missing or unrecognised operation fails explicitly. The host has no second implementation to fall back to.
+
+Use the same fixture and engine commit across hosts. Check that their inputs reach the same Lean operations and compare their outputs. Add a Lean theorem where a new engine rule admits one, and use host tests for ABI ownership, I/O and output parity. These checks cover different parts of the boundary.
+
 ## Window and GPU milestone
 
 Reuse the AppKit window bridge on macOS and use a Linux window surface for the same fixture. The engine already supplies WGSL and scene data. Its existing RenderPlan contract also supplies pipeline descriptors and the command sequence. The native host needs access to that plan before it can drive `wgpu` with the same inputs as the existing host. The window must forward actual pointer events and present the two resulting frames. The cross-platform comparison then uses the same engine build, fixture and viewport for startup, first frame, frame time, input latency and peak memory.
