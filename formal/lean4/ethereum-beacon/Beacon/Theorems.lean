@@ -325,6 +325,24 @@ theorem byteList_decode_over_limit (limit : Preset → Nat) (p : Preset) (b : By
     (Codec.byteList limit).decode p b = .error "byte list: over limit" := by
   simp [Codec.byteList, Nat.not_le.mpr h]
 
+/-- Kind: refusal. Says: the actual payload transition returns no state
+    when no fixture verdict is supplied. Does not say: a supplied verdict
+    independently validates the execution payload. -/
+theorem processExecutionPayload_without_verdict (c : Ctx) (s : BeaconState)
+    (body : BeaconBlockBody) (h : c.fixtureExecutionVerdict = none) :
+    processExecutionPayload c s body = .error "execution payload: execution verdict unavailable" := by
+  simp only [processExecutionPayload, h]
+
+/-- Kind: refusal. Says: a default context cannot accept an execution
+    payload. Does not say: the independent EL is linked. -/
+theorem processExecutionPayload_default_context (p : Preset) (s : BeaconState)
+    (body : BeaconBlockBody) :
+    processExecutionPayload { p := p } s body = .error "execution payload: execution verdict unavailable" := by
+  rfl
+
+#print axioms processExecutionPayload_without_verdict
+#print axioms processExecutionPayload_default_context
+
 #print axioms slotStep_slot
 #print axioms iterateSlots_succ
 #print axioms iterateSlots_add
