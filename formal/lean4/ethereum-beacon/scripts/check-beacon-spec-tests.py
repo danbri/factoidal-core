@@ -42,6 +42,24 @@ def validate_counts(name, h):
         raise ValueError(f"{name}: verification-mode count exceeds eligible cases")
 
 
+
+PAYLOAD_KEYS = ("payload_control_passed", "payload_control_failed",
+                "payload_decode_refused", "payload_control_not_reached")
+
+
+def validate_payload_coverage(name, h):
+    if any(type(h[k]) is not int or h[k] < 0 for k in PAYLOAD_KEYS):
+        raise ValueError(f"{name}: nonnegative integer payload control counts required")
+    passed, failed, refused, not_reached = (h[k] for k in PAYLOAD_KEYS)
+    if passed + failed + refused + not_reached != h["total"]:
+        raise ValueError(f"{name}: inconsistent payload control partition")
+    if name == "operations/execution_payload":
+        if failed or not_reached or not passed:
+            raise ValueError(f"{name}: failed, missing or vacuous payload control evidence")
+    elif passed or failed or refused:
+        raise ValueError(f"{name}: unexpected payload control evidence")
+
+
 def summarise(run):
     if (run["fork"] != "fulu" or run["preset"] not in ("minimal", "mainnet")
             or type(run["optional_bls_verified"]) is not bool):
@@ -56,6 +74,7 @@ def summarise(run):
             raise ValueError(f"{name}: duplicate handler")
         counts = {k: h[k] for k in KEYS}
         validate_counts(name, counts)
+        validate_payload_coverage(name, h)
         current[name] = counts
     if not current:
         raise ValueError("empty handler inventory")
@@ -114,14 +133,17 @@ def self_test():
     row = dict.fromkeys(KEYS, 0) | {"runner": "a", "handler": "b", "total": 3, "pass": 3,
                                     "bls_required": 2, "bls_required_pass": 2,
                                     "bls_optional": 1, "bls_optional_pass": 1,
-                                    "signatures_checked": 3}
+                                    "signatures_checked": 3,
+                                    "payload_control_passed": 0, "payload_control_failed": 0,
+                                    "payload_decode_refused": 0, "payload_control_not_reached": 3}
     run = {"fork": "fulu", "preset": "minimal", "optional_bls_verified": True, "handlers": [row]}
     base = summarise(run)
     assert compare(base, base) == []
     controls = 0
     for changes in ({"pass": 2, "fail": 1, "bls_required_pass": 1},
                     {"pass": 2, "unsupported": 1, "bls_required_pass": 1},
-                    {"total": 2, "pass": 2, "bls_required": 1, "bls_required_pass": 1, "signatures_checked": 2},
+                    {"total": 2, "pass": 2, "bls_required": 1, "bls_required_pass": 1, "signatures_checked": 2,
+                     "payload_control_not_reached": 2},
                     {"signatures_checked": 0},
                     {"bls_required": 1, "bls_required_pass": 1, "bls_optional": 2, "bls_optional_pass": 2}):
         bad = copy.deepcopy(run)
@@ -152,6 +174,31 @@ def self_test():
             controls += 1
         else:
             raise AssertionError(f"malformed evidence accepted: {bad}")
+    # The control runs on decoded operations; refused SSZ is distinct.
+    payload = row | {"runner": "operations", "handler": "execution_payload",
+                     "payload_control_passed": 2, "payload_decode_refused": 1,
+                     "payload_control_not_reached": 0}
+    summarise(run | {"handlers": [payload]})
+    for changes in ({"payload_control_passed": 0, "payload_decode_refused": 3},
+                    {"payload_control_passed": 1, "payload_control_failed": 1},
+                    {"payload_control_passed": 1, "payload_control_not_reached": 1},
+                    {"payload_control_passed": 3}, {"payload_control_passed": True},
+                    {"payload_control_passed": -1},
+                    {"runner": "unrelated"}):
+        try:
+            summarise(run | {"handlers": [payload | changes]})
+        except ValueError:
+            controls += 1
+        else:
+            raise AssertionError(f"invalid control coverage accepted: {changes}")
+    missing = dict(payload)
+    del missing["payload_control_passed"]
+    try:
+        summarise(run | {"handlers": [missing]})
+    except KeyError:
+        controls += 1
+    else:
+        raise AssertionError("missing payload control evidence accepted")
     print(f"ratchet self-test: {controls} negative controls behaved")
 
 def main():
@@ -171,6 +218,10 @@ def main():
     path = pathlib.Path(args.baseline)
     doc = json.loads(path.read_text()) if path.exists() else {"presets": {}}
     text = f'### Beacon vectors, {run["preset"]} preset, {run["fork"]}\n\n{table(run)}\n'
+    for h in run["handlers"]:
+        if h["runner"] == "operations" and h["handler"] == "execution_payload":
+            text += ("\nExecution payload control coverage: " +
+                     ", ".join(f"{k}={h[k]}" for k in PAYLOAD_KEYS) + "\n")
     print(text)
     if args.summary:
         with open(args.summary, "a") as out:

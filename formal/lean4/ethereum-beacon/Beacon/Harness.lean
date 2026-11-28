@@ -15,6 +15,11 @@ inductive Status where
   | pass | fail | unsupported
   deriving BEq, Repr
 
+/-- Test-only coverage of the missing execution verdict control. -/
+inductive PayloadControl where
+  | notReached | decodeRefused | passed | failed
+  deriving BEq
+
 structure CaseResult where
   name : String
   status : Status
@@ -24,6 +29,7 @@ structure CaseResult where
   /-- Whether signatures were really checked while running this case. -/
   blsVerified : Bool := false
   micros : Nat := 0
+  payloadControl : PayloadControl := .notReached
 
 def hexDigit (c : UInt8) : Option UInt8 :=
   if 48 ≤ c && c ≤ 57 then some (c - 48)
